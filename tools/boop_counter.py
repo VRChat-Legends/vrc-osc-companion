@@ -146,7 +146,7 @@ def meme_label(n: int) -> str | None:
 
 
 def next_meme(n: int) -> int | None:
-    """The next exact meme number above n, for the teaser line."""
+    """The next exact meme number above n. Handy for a countdown line."""
     later = [k for k in MEME_NUMBERS if k > n]
     return min(later) if later else None
 
@@ -211,10 +211,28 @@ class BoopLog:
 
     def stats(self) -> dict:
         today = date.today().isoformat()
+        by_day = self.data["byDay"]
+        best_day, best = ("", 0)
+        for day, count in by_day.items():
+            if count > best:
+                best_day, best = day, count
+
+        # Calendar span rather than days-with-boops, so the average is honest about the
+        # quiet days instead of flattering itself.
+        first = self.data["firstBoopAt"]
+        span = 1
+        if first:
+            started = datetime.fromisoformat(first).date()
+            span = max(1, (date.today() - started).days + 1)
+
         return {
             "total": self.data["total"],
-            "today": self.data["byDay"].get(today, 0),
+            "today": by_day.get(today, 0),
             "session": self.data["sessionBoops"],
+            "best": best,
+            "bestDay": best_day,
+            "days": span,
+            "avg": round(self.data["total"] / span, 1),
             "last": self.data["lastBoopAt"] or "never",
         }
 
@@ -291,11 +309,11 @@ def render_message(stats: dict, ascii_only: bool = False) -> str:
     """
     Multi line chatbox card.
 
-        + - -  B O O P S  - - +
-                1,337
-             ~ L E E T ~
-        today 42  .  session 12
-        next: 1701 in 364
+        + B O O P S +
+            1,337
+         ~ L E E T ~
+        today 42 . best 128
+        18.4 a day over 71 days
 
     Everything past the headline is optional and gets dropped by clamp_chatbox if the
     numbers grow long enough to threaten the 144 character budget.
@@ -308,11 +326,10 @@ def render_message(stats: dict, ascii_only: bool = False) -> str:
     if label:
         lines.append(f"{wing} {label} {wing}")
 
-    lines.append(f"today {stats['today']:,} {dot} session {stats['session']:,}")
+    lines.append(f"today {stats['today']:,} {dot} best {stats['best']:,}")
 
-    upcoming = next_meme(total)
-    if upcoming:
-        lines.append(f"next: {upcoming:,} in {upcoming - total:,}")
+    days = stats["days"]
+    lines.append(f"{stats['avg']:,} a day over {days:,} day{'' if days == 1 else 's'}")
 
     return "\n".join(lines)
 
@@ -332,7 +349,7 @@ def main() -> int:
                         help="where to keep the running total")
     parser.add_argument("--template", default=None,
                         help="override the built in layout with one line, supports "
-                             "{total} {today} {session} {last}")
+                             "{total} {today} {best} {avg} {days} {session} {bestDay} {last}")
     parser.add_argument("--ascii", action="store_true",
                         help="plain ASCII decoration instead of unicode glyphs")
     parser.add_argument("--hold", type=float, default=90.0,
