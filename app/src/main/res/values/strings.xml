@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">VRC OSC Companion</string>
+    <string name="osc_channel_name">OSC link</string>
+    <string name="osc_channel_desc">Keeps the OSC connection to VRChat alive while the panel is in the background.</string>
+</resources>

@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+# Gradle wrapper must stay LF or it will not run on Linux CI
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+*.jar binary
+*.png binary
+*.jks binary
+*.keystore binary
+*.apk binary
+*.aab binary

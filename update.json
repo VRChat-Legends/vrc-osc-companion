@@ -1,0 +1,7 @@
+{
+  "version": "0.1.0",
+  "versionCode": 1,
+  "apkUrl": "https://github.com/VRChat-Legends/vrc-osc-companion/releases/latest/download/VRC-OSC-Companion.apk",
+  "notes": "First build. Chatbox, avatar parameters over OSCQuery, input, avatar scaling, status line, heart rate, OSC monitor.",
+  "minSupportedVersionCode": 1
+}
