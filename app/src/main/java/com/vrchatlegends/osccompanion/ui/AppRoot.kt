@@ -13,12 +13,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
@@ -36,14 +40,18 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vrchatlegends.osccompanion.ui.screens.AccountScreen
+import com.vrchatlegends.osccompanion.ui.screens.BridgeScreen
 import com.vrchatlegends.osccompanion.ui.screens.ChatboxScreen
+import com.vrchatlegends.osccompanion.ui.screens.CommunityScreen
 import com.vrchatlegends.osccompanion.ui.screens.HomeScreen
 import com.vrchatlegends.osccompanion.ui.screens.InputScreen
+import com.vrchatlegends.osccompanion.ui.screens.LogsScreen
 import com.vrchatlegends.osccompanion.ui.screens.MonitorScreen
 import com.vrchatlegends.osccompanion.ui.screens.ParametersScreen
 import com.vrchatlegends.osccompanion.ui.screens.ScaleScreen
 import com.vrchatlegends.osccompanion.ui.screens.SettingsScreen
 import com.vrchatlegends.osccompanion.ui.screens.StatusScreen
+import com.vrchatlegends.osccompanion.ui.screens.VrchatToolsScreen
 
 enum class Destination(val route: String, val label: String, val icon: ImageVector) {
     HOME("home", "Home", Icons.Filled.Dashboard),
@@ -52,7 +60,11 @@ enum class Destination(val route: String, val label: String, val icon: ImageVect
     INPUT("input", "Input", Icons.Filled.Gamepad),
     SCALE("scale", "Scale", Icons.Filled.Height),
     STATUS("status", "Status", Icons.Filled.Favorite),
+    BRIDGE("bridge", "PC Link", Icons.Filled.Sync),
+    LOGS("logs", "Logs", Icons.Filled.Description),
     MONITOR("monitor", "Monitor", Icons.Filled.Terminal),
+    VRCHAT_TOOLS("vrchat", "VRChat", Icons.Filled.Extension),
+    COMMUNITY("community", "Community", Icons.Filled.Groups),
     ACCOUNT("account", "Account", Icons.Filled.AccountCircle),
     SETTINGS("settings", "Settings", Icons.Filled.Settings),
 }
@@ -106,7 +118,11 @@ fun AppRoot(viewModel: AppViewModel) {
                 composable(Destination.INPUT.route) { InputScreen(viewModel) }
                 composable(Destination.SCALE.route) { ScaleScreen(viewModel) }
                 composable(Destination.STATUS.route) { StatusScreen(viewModel) }
+                composable(Destination.BRIDGE.route) { BridgeScreen(viewModel) }
+                composable(Destination.LOGS.route) { LogsScreen(viewModel) }
                 composable(Destination.MONITOR.route) { MonitorScreen(viewModel) }
+                composable(Destination.VRCHAT_TOOLS.route) { VrchatToolsScreen() }
+                composable(Destination.COMMUNITY.route) { CommunityScreen() }
                 composable(Destination.ACCOUNT.route) { AccountScreen(viewModel) }
                 composable(Destination.SETTINGS.route) { SettingsScreen(viewModel) }
             }

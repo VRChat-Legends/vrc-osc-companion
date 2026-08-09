@@ -1,6 +1,7 @@
 package com.vrchatlegends.osccompanion.osc
 
 import android.content.Context
+import com.vrchatlegends.osccompanion.bridge.PcBridge
 import com.vrchatlegends.osccompanion.data.AppSettings
 import com.vrchatlegends.osccompanion.net.NetworkUtils
 import com.vrchatlegends.osccompanion.oscquery.OscQueryDiscovery
@@ -95,6 +96,16 @@ class OscRepository private constructor(private val appContext: Context) {
         onError = { pushError(it) },
     )
 
+    /**
+     * Relays VRChat traffic to and from a desktop. Lives here rather than in the UI layer
+     * because it has to see every inbound message and be able to inject outbound ones.
+     */
+    val bridge = PcBridge(
+        scope = scope,
+        onEvent = ::pushEvent,
+        onError = { pushError(it) },
+    ).also { it.onDownlink = { message -> sendFromBridge(message) } }
+
     private var queryServer: OscQueryServer? = null
     private var discovery: OscQueryDiscovery? = null
     private var chatboxJob: Job? = null
@@ -110,6 +121,9 @@ class OscRepository private constructor(private val appContext: Context) {
     fun applySettings(newSettings: AppSettings) {
         val previous = settings
         settings = newSettings
+        scope.launch {
+            bridge.apply(newSettings.bridgeConfig(), NetworkUtils.localIpv4OrLoopback(appContext))
+        }
         if (!_connection.value.running) return
         val hostChanged = previous.oscHost != newSettings.oscHost ||
             previous.oscSendPort != newSettings.oscSendPort ||
@@ -140,6 +154,7 @@ class OscRepository private constructor(private val appContext: Context) {
         }
 
         if (settings.useOscQuery) startOscQuery()
+        bridge.apply(settings.bridgeConfig(), NetworkUtils.localIpv4OrLoopback(appContext))
         pushEvent("OSC listening on :${transport.boundPort}")
     }
 
@@ -166,6 +181,7 @@ class OscRepository private constructor(private val appContext: Context) {
         discovery = null
         queryServer?.stop()
         queryServer = null
+        bridge.stop()
         transport.stop()
         _connection.update { it.copy(running = false, listenPort = 0, oscQueryHttpPort = 0) }
     }
@@ -243,6 +259,9 @@ class OscRepository private constructor(private val appContext: Context) {
 
     private fun handleInbound(message: OscMessage, peer: String) {
         appendLog(OscLogEntry(OscDirection.IN, message, peer = peer))
+        // VRChat on Quest can only reach localhost, so this is the only chance a PC gets
+        // to see the message.
+        bridge.uplink(message)
         _connection.update {
             it.copy(
                 lastInboundMs = System.currentTimeMillis(),
@@ -299,6 +318,22 @@ class OscRepository private constructor(private val appContext: Context) {
         transport.send(message)
         appendLog(OscLogEntry(OscDirection.OUT, message))
         _connection.update { it.copy(sent = transport.sentCount.get()) }
+    }
+
+    /**
+     * Delivers a message the PC asked us to forward. Parameter writes are mirrored into
+     * local state so the Params screen stays truthful about what the avatar is doing.
+     */
+    private fun sendFromBridge(message: OscMessage) {
+        if (message.address.startsWith(VrcOsc.AVATAR_PARAMETER_PREFIX)) {
+            val name = message.address.removePrefix(VrcOsc.AVATAR_PARAMETER_PREFIX)
+            val arg = message.args.firstOrNull()
+            if (arg != null) {
+                setParameter(name, arg)
+                return
+            }
+        }
+        send(message)
     }
 
     fun setParameter(name: String, value: OscArg) {

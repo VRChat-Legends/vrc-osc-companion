@@ -4,11 +4,13 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.vrchatlegends.osccompanion.bridge.PcBridge
 import com.vrchatlegends.osccompanion.data.AppSettings
 import com.vrchatlegends.osccompanion.data.ChatboxPreset
 import com.vrchatlegends.osccompanion.data.PresetStore
 import com.vrchatlegends.osccompanion.data.SettingsStore
 import com.vrchatlegends.osccompanion.data.StatusLine
+import com.vrchatlegends.osccompanion.logs.VrcLogReader
 import com.vrchatlegends.osccompanion.osc.OscArg
 import com.vrchatlegends.osccompanion.osc.OscRepository
 import com.vrchatlegends.osccompanion.osc.VrcOsc
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -65,6 +68,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var statusJob: Job? = null
     private var lastPulsoidToken: String? = null
 
+    val bridge: StateFlow<PcBridge.Stats> get() = osc.bridge.stats
+
+    private val _logSources = MutableStateFlow<List<VrcLogReader.LogSource>>(emptyList())
+    val logSources: StateFlow<List<VrcLogReader.LogSource>> = _logSources.asStateFlow()
+
+    private val _logLines = MutableStateFlow<List<VrcLogReader.LogLine>>(emptyList())
+    val logLines: StateFlow<List<VrcLogReader.LogLine>> = _logLines.asStateFlow()
+
+    private val _logStatus = MutableStateFlow("Not scanned yet")
+    val logStatus: StateFlow<String> = _logStatus.asStateFlow()
+
+    private var selectedLog: VrcLogReader.LogSource? = null
+    private var logOffset = -1L
+    private var logJob: Job? = null
+
     init {
         viewModelScope.launch {
             settings.collect { current ->
@@ -85,9 +103,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect() {
         osc.start()
-        if (settings.value.keepAliveInBackground) {
-            OscForegroundService.start(getApplication())
-        }
+        // Horizon OS freezes a 2D panel the moment the user drops into VRChat, which kills
+        // the socket. The service is what keeps OSC alive, so it is not optional.
+        OscForegroundService.start(getApplication())
     }
 
     fun disconnect() {
@@ -246,9 +264,90 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         sendChatbox(line)
     }
 
+    // ── VRChat logs ─────────────────────────────────────────────────────────────
+
+    /**
+     * Looks for VRChat's log in both places it can live. The direct path is tried first
+     * because it needs no picker, then any folder the user already granted.
+     */
+    fun scanLogs() {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val direct = VrcLogReader.findDirectLogs()
+            val granted = settings.value.logFolderUri
+                .takeIf { it.isNotBlank() }
+                ?.let { Uri.parse(it) }
+                ?.takeIf { VrcLogReader.hasTreePermission(app, it) }
+            val fromTree = granted?.let { VrcLogReader.findTreeLogs(app, it) }.orEmpty()
+
+            val all = (direct + fromTree).distinctBy { it.key }.sortedByDescending { it.lastModifiedMs }
+            _logSources.value = all
+            _logStatus.value = when {
+                all.isNotEmpty() -> "Found ${all.size} log file${if (all.size == 1) "" else "s"}"
+                !VrcLogReader.hasAllFilesAccess() ->
+                    "No logs visible. Grant All files access, or pick VRChat's folder."
+                granted == null -> "No logs visible. Pick VRChat's folder to grant access."
+                else -> "No logs in the granted folder. Check you picked .../files."
+            }
+            all.firstOrNull()?.let { if (selectedLog == null) selectLog(it) }
+        }
+    }
+
+    fun onLogFolderPicked(uri: Uri) {
+        val app = getApplication<Application>()
+        VrcLogReader.persistTreePermission(app, uri)
+        viewModelScope.launch {
+            settingsStore.setLogFolderUri(uri.toString())
+            scanLogs()
+        }
+    }
+
+    fun selectLog(source: VrcLogReader.LogSource) {
+        selectedLog = source
+        logOffset = -1L
+        _logLines.value = emptyList()
+        refreshLog()
+        if (settings.value.logAutoRefresh) startLogTail() else logJob?.cancel()
+    }
+
+    fun refreshLog() {
+        val source = selectedLog ?: return
+        viewModelScope.launch {
+            val (lines, offset) = VrcLogReader.readTail(getApplication(), source, logOffset)
+            logOffset = offset
+            if (lines.isNotEmpty()) {
+                _logLines.update { current ->
+                    val next = current + lines
+                    if (next.size > LOG_LINE_CAPACITY) next.takeLast(LOG_LINE_CAPACITY) else next
+                }
+            }
+        }
+    }
+
+    private fun startLogTail() {
+        logJob?.cancel()
+        logJob = viewModelScope.launch {
+            while (true) {
+                delay(LOG_TAIL_INTERVAL_MS)
+                refreshLog()
+            }
+        }
+    }
+
+    fun setLogAutoRefresh(enabled: Boolean) {
+        updateSettings { setLogAutoRefresh(enabled) }
+        if (enabled) startLogTail() else logJob?.cancel()
+    }
+
     override fun onCleared() {
         super.onCleared()
         statusJob?.cancel()
+        logJob?.cancel()
         pulsoid.disconnect()
+    }
+
+    private companion object {
+        const val LOG_LINE_CAPACITY = 1_000
+        const val LOG_TAIL_INTERVAL_MS = 2_000L
     }
 }

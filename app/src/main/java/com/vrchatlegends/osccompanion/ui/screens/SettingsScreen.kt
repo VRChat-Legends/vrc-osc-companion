@@ -35,6 +35,7 @@ import com.vrchatlegends.osccompanion.ui.LabelledValue
 import com.vrchatlegends.osccompanion.ui.ScreenScaffold
 import com.vrchatlegends.osccompanion.ui.SectionCard
 import com.vrchatlegends.osccompanion.ui.theme.Bad
+import com.vrchatlegends.osccompanion.ui.theme.Warn
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -159,12 +160,37 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 settings.autoConnect,
             ) { v -> viewModel.updateSettings { setAutoConnect(v) } }
 
-            ToggleSetting(
-                "Stay alive in the background",
-                "Runs a foreground service so the link survives while you are inside VRChat. " +
-                    "Without it Horizon OS freezes the panel and OSC stops.",
-                settings.keepAliveInBackground,
-            ) { v -> viewModel.updateSettings { setKeepAlive(v) } }
+            Text(
+                "Background running is always on. Horizon OS freezes a 2D panel as soon as you drop " +
+                    "into VRChat, so the app runs a foreground service whenever it is connected. " +
+                    "That notification is what keeps OSC alive and cannot be turned off.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        SectionCard(
+            title = "Meta Developer Mode",
+            subtitle = "Only some features need it.",
+        ) {
+            Text(
+                "Meta Horizon phone app > Menu > Devices > your headset > Headset settings > " +
+                    "Developer Mode. A free verified developer organisation on your Meta account is " +
+                    "required before the switch appears.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Required for: now playing in the chatbox, reading VRChat's log files, and " +
+                    "sideloading builds that did not come from the store.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Warn,
+            )
+            Text(
+                "Not required for: chatbox text, avatar parameters, input control, avatar scale, " +
+                    "status lines, heart rate or the PC link.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         SectionCard(title = "About") {

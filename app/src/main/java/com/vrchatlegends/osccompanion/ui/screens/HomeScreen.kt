@@ -29,6 +29,7 @@ import com.vrchatlegends.osccompanion.ui.StatusDot
 import com.vrchatlegends.osccompanion.ui.StatusTone
 import com.vrchatlegends.osccompanion.ui.theme.Bad
 import com.vrchatlegends.osccompanion.ui.theme.Good
+import com.vrchatlegends.osccompanion.ui.theme.Warn
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -38,6 +39,7 @@ fun HomeScreen(viewModel: AppViewModel, navController: NavController) {
     val parameters by viewModel.osc.parameters.collectAsStateWithLifecycle()
     val avatarId by viewModel.osc.avatarId.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
+    val bridge by viewModel.bridge.collectAsStateWithLifecycle()
 
     val tone = when {
         !connection.running -> StatusTone.IDLE
@@ -91,6 +93,59 @@ fun HomeScreen(viewModel: AppViewModel, navController: NavController) {
             }
         }
 
+        SectionCard(
+            title = "Running in the background",
+            subtitle = if (connection.running) {
+                "Active. The link survives while you are inside VRChat."
+            } else {
+                "Not running. OSC only works while this is connected."
+            },
+            trailing = { StatusDot(if (connection.running) StatusTone.GOOD else StatusTone.BAD) },
+        ) {
+            Text(
+                "Horizon OS suspends a 2D panel the moment you put it away, which would kill the " +
+                    "socket mid session. Connecting starts a foreground service so the panel keeps " +
+                    "running behind VRChat. Leave the notification alone and do not force stop the app.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!connection.running) {
+                Text(
+                    "Press Connect above before you launch VRChat.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Warn,
+                )
+            }
+        }
+
+        SectionCard(
+            title = "Meta Developer Mode",
+            subtitle = "Required for a few features, not for basic OSC.",
+        ) {
+            Text(
+                "Turn it on in the Meta Horizon phone app: Menu > Devices > your headset > " +
+                    "Headset settings > Developer Mode. You need a verified developer organisation on " +
+                    "your Meta account first, which is free.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Needs Developer Mode:",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Warn,
+            )
+            Text(
+                "- Now playing in your chatbox, because reading what the headset is playing goes " +
+                    "through a channel Meta gates behind Developer Mode\n" +
+                    "- Reading VRChat's log files from the Logs tab\n" +
+                    "- Sideloading builds of this app that did not come from the store",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "Chatbox, parameters, input, avatar scale, status and the PC link all work without it.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
         SectionCard(title = "Quick actions") {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 AssistChip(
@@ -104,6 +159,14 @@ fun HomeScreen(viewModel: AppViewModel, navController: NavController) {
                 AssistChip(
                     onClick = { navController.navigate(Destination.SCALE.route) },
                     label = { Text("Avatar scale") },
+                )
+                AssistChip(
+                    onClick = { navController.navigate(Destination.BRIDGE.route) },
+                    label = { Text(if (bridge.running) "PC link (on)" else "PC link") },
+                )
+                AssistChip(
+                    onClick = { navController.navigate(Destination.LOGS.route) },
+                    label = { Text("VRChat logs") },
                 )
                 AssistChip(
                     onClick = { viewModel.clearChatbox() },

@@ -7,7 +7,7 @@ It runs as a 2D panel next to VRChat on the headset itself and speaks
 [VRChat's OSC protocol](https://docs.vrchat.com/docs/osc-overview) over UDP, so you get a
 MagicChatbox-class toolkit without needing a PC.
 
-Native **Kotlin + Jetpack Compose**. No WebView, no game engine, no PC bridge.
+Native **Kotlin + Jetpack Compose**. No WebView, no game engine.
 
 ---
 
@@ -19,10 +19,51 @@ Native **Kotlin + Jetpack Compose**. No WebView, no game engine, no PC bridge.
 | **Avatar parameters** | Auto-discovered from VRChat over **OSCQuery**, rendered as live toggles / sliders / steppers |
 | **Input controller** | Movement, look, jump, run, voice/mute, quick menu, grab & drop, emotes, safe mode |
 | **Avatar scaling** | `/avatar/eyeheight` slider plus saved height presets, respects world limits |
-| **Status auto-chatbox** | Clock, headset battery, controller battery, network, uptime, VRCL profile, composed into one rotating line |
+| **Status auto-chatbox** | Clock, headset battery, network, uptime, VRCL profile, composed into one rotating line |
 | **Heart rate** | Pulsoid websocket to chatbox text and to avatar parameters (`HR`, `HRPercent`, `isHRConnected`, `onesHR`/`tensHR`/`hundredsHR`) |
+| **PC Link** | Two way OSC bridge between VRChat on the headset and an app on your PC. See below |
+| **VRChat logs** | Reads VRChat's own log off the headset: world changes, joins and leaves, errors, raw tail |
 | **Monitor** | Raw bidirectional OSC feed with address filtering, for debugging |
+| **VRChat Tools** | Coming soon. VRChat account sign-in and API features |
+| **Community** | Coming soon. VRChat Legends events, leaderboards and shared presets |
 | **VRChat Legends** | Optional sign-in with the same account as the website. Everything works signed out |
+
+## Background running
+
+Horizon OS suspends a 2D panel the moment you drop into VRChat, which would kill the
+socket mid session. Connecting therefore always starts a foreground service, and that
+notification is what keeps OSC alive. This is not optional and there is no toggle for it.
+
+## Meta Developer Mode
+
+Most of the app works without it. These do not:
+
+* Now playing in your chatbox
+* Reading VRChat's log files
+* Sideloading a build that did not come from the store
+
+Turn it on in the Meta Horizon phone app: **Menu > Devices > your headset > Headset
+settings > Developer Mode**. A free verified developer organisation on your Meta account
+is required first.
+
+## PC Link
+
+VRChat on a Quest only ever sends OSC to `127.0.0.1`, so there is no supported way to make
+a PC the destination. This app runs on the headset, holds that loopback socket, and relays
+both directions:
+
+```
+VRChat  ->  127.0.0.1:9001  (this app)  ->  yourPc:9001
+your PC ->  questIp:9100    (this app)  ->  VRChat
+```
+
+So a contact receiver poke on your avatar reaches your PC, your PC decides what to do, and
+the response goes back into VRChat. The uplink is byte identical OSC, so existing desktop
+tools work unmodified once pointed at the headset.
+
+A dependency free reference client lives at
+[tools/pc_bridge_demo.py](tools/pc_bridge_demo.py). Full design notes, traffic shaping and
+security model: [docs/PC-BRIDGE.md](docs/PC-BRIDGE.md).
 
 ## Networking model
 
@@ -46,6 +87,8 @@ Legacy `9000`/`9001` still works if OSCQuery is unavailable.
 app/src/main/java/com/vrchatlegends/osccompanion/
   osc/         OSC 1.0 codec, UDP transport, VRChat address catalog, shared repository
   oscquery/    mDNS discovery + embedded OSCQuery HTTP server
+  bridge/      two way PC relay for VRChat traffic that cannot leave the headset
+  logs/        VRChat log discovery, tailing and parsing
   net/         Quest LAN IP / broadcast detection
   data/        DataStore settings + chatbox presets
   vrcl/        VRChat Legends API client and Custom Tab OAuth
@@ -55,8 +98,11 @@ app/src/main/java/com/vrchatlegends/osccompanion/
   ui/          Compose screens and theme
 docs/
   OSC-REFERENCE.md      every VRChat OSC address, including the undocumented corners
+  PC-BRIDGE.md          how the headset relays OSC to and from a PC
   QUEST-BUILD.md        build, sideload, SideQuest and Meta Horizon Store submission
   VRCL-INTEGRATION.md   how sign-in works against the VRChat Legends API
+tools/
+  pc_bridge_demo.py     reference desktop client for the PC link
 ```
 
 ## Build

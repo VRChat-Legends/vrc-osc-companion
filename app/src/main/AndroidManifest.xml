@@ -12,6 +12,14 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- VRChat's log sits in its own external files directory. On Horizon OS this is
+         reachable either with All files access or through a folder the user hands over
+         with the storage access framework, so both routes are declared. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
     <!-- Quest has no touchscreen, no telephony, no camera requirement. Declaring these
          optional keeps the app installable and store-visible on all Quest models. -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

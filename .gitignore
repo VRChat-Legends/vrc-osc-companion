@@ -16,6 +16,7 @@ build/
 *.aab
 *.ap_
 *.dex
+build-log.txt
 
 # Signing material - never commit these
 *.jks
@@ -25,3 +26,7 @@ signing.properties
 
 # Secrets
 secrets.properties
+
+# Python reference tooling
+__pycache__/
+*.pyc
