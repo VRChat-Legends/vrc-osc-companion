@@ -267,8 +267,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ── VRChat logs ─────────────────────────────────────────────────────────────
 
     /**
-     * Looks for VRChat's log in both places it can live. The direct path is tried first
-     * because it needs no picker, then any folder the user already granted.
+     * Builds the list of readable log sources. Logcat comes first because on Quest that is
+     * where VRChat actually logs, then any file we can reach.
      */
     fun scanLogs() {
         viewModelScope.launch {
@@ -280,16 +280,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 ?.takeIf { VrcLogReader.hasTreePermission(app, it) }
             val fromTree = granted?.let { VrcLogReader.findTreeLogs(app, it) }.orEmpty()
 
-            val all = (direct + fromTree).distinctBy { it.key }.sortedByDescending { it.lastModifiedMs }
+            val files = (direct + fromTree).distinctBy { it.key }.sortedByDescending { it.lastModifiedMs }
+            val all = listOf(VrcLogReader.logcatSource()) + files
             _logSources.value = all
             _logStatus.value = when {
-                all.isNotEmpty() -> "Found ${all.size} log file${if (all.size == 1) "" else "s"}"
-                !VrcLogReader.hasAllFilesAccess() ->
-                    "No logs visible. Grant All files access, or pick VRChat's folder."
-                granted == null -> "No logs visible. Pick VRChat's folder to grant access."
-                else -> "No logs in the granted folder. Check you picked .../files."
+                VrcLogReader.canReadOtherAppLogs(app) ->
+                    "Log access granted. Reading VRChat from logcat." +
+                        if (files.isNotEmpty()) " Plus ${files.size} log file(s)." else ""
+                files.isNotEmpty() -> "${files.size} log file(s). Logcat needs the adb grant below."
+                else -> "Logcat is not granted yet, and no log files are visible."
             }
-            all.firstOrNull()?.let { if (selectedLog == null) selectLog(it) }
+            if (selectedLog == null) selectLog(all.first())
         }
     }
 
@@ -315,11 +316,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val (lines, offset) = VrcLogReader.readTail(getApplication(), source, logOffset)
             logOffset = offset
-            if (lines.isNotEmpty()) {
-                _logLines.update { current ->
-                    val next = current + lines
-                    if (next.size > LOG_LINE_CAPACITY) next.takeLast(LOG_LINE_CAPACITY) else next
-                }
+            if (lines.isEmpty()) return@launch
+            if (source.logcat) {
+                // logcat has no byte cursor, so each read is a fresh snapshot of the tail.
+                _logLines.value = lines.takeLast(LOG_LINE_CAPACITY)
+                return@launch
+            }
+            _logLines.update { current ->
+                val next = current + lines
+                if (next.size > LOG_LINE_CAPACITY) next.takeLast(LOG_LINE_CAPACITY) else next
             }
         }
     }

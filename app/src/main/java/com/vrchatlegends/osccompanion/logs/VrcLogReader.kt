@@ -1,7 +1,9 @@
 package com.vrchatlegends.osccompanion.logs
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -13,44 +15,51 @@ import java.io.FileInputStream
 import java.io.RandomAccessFile
 
 /**
- * Reads VRChat's own Unity log off the headset.
+ * Reads VRChat's log off the headset.
  *
- * VRChat writes to its private external directory, and Android 11 upward walls that off
- * from other apps, so there are three routes and the reader tries them in order of
- * convenience:
+ * Measured on a Quest 3S: VRChat's package is `com.vrchat.oculus.quest` and it writes **no
+ * log file at all**. Its Unity output goes to logcat, so that is the primary source here.
+ * The file reader is kept as a fallback because desktop and older builds do write
+ * `output_log*.txt`, and because a user may hand over a folder containing a copied log.
  *
- *  1. Direct [File] access to a known path. Works on Horizon OS builds that still allow it
- *     once All files access is granted.
- *  2. A folder the user picked through the storage access framework, whose permission we
- *     persist so it survives a restart.
- *  3. Nothing, in which case the UI explains that Developer Mode plus `adb logcat` is the
- *     guaranteed fallback.
+ * Reading another app's logcat needs `android.permission.READ_LOGS`. That permission has
+ * the `development` protection flag, so it cannot be granted by tapping a dialog: it has to
+ * come over adb, which means Meta Developer Mode has to be on.
  *
- * VRChat's Android package id is probed rather than hardcoded because it has differed
- * between store builds.
+ *     adb shell pm grant com.vrchatlegends.osccompanion android.permission.READ_LOGS
+ *
+ * Without it, logcat still works but only returns this app's own lines.
  */
 object VrcLogReader {
 
-    /** Candidate VRChat Android application ids, most likely first. */
+    /** Candidate VRChat Android application ids, confirmed first. */
     val CANDIDATE_PACKAGES = listOf(
+        "com.vrchat.oculus.quest",
         "com.vrchat.mobile.playstore",
         "com.vrchat.mobile.oculus",
         "com.vrchat.mobile.quest",
-        "com.vrchat.vrcquest",
     )
+
+    const val GRANT_COMMAND =
+        "adb shell pm grant com.vrchatlegends.osccompanion android.permission.READ_LOGS"
 
     private const val LOG_NAME_PREFIX = "output_log"
     private const val MAX_TAIL_BYTES = 512L * 1024L
 
     data class LogSource(
         val displayName: String,
-        val sizeBytes: Long,
-        val lastModifiedMs: Long,
-        /** Exactly one of these is set. */
+        val sizeBytes: Long = 0L,
+        val lastModifiedMs: Long = 0L,
+        /** Exactly one of these is set, or [logcat] is true. */
         val file: File? = null,
         val documentUri: Uri? = null,
+        val logcat: Boolean = false,
     ) {
-        val key: String get() = documentUri?.toString() ?: file?.absolutePath ?: displayName
+        val key: String
+            get() = when {
+                logcat -> "logcat"
+                else -> documentUri?.toString() ?: file?.absolutePath ?: displayName
+            }
     }
 
     enum class Level { LOG, WARNING, ERROR, EXCEPTION, OTHER }
@@ -72,6 +81,16 @@ object VrcLogReader {
     }
 
     // ── Discovery ───────────────────────────────────────────────────────────────
+
+    /** The live logcat stream, which is where VRChat actually logs on Quest. */
+    fun logcatSource(): LogSource = LogSource("VRChat live log (logcat)", logcat = true)
+
+    /**
+     * True when this app can see other processes' logcat. Without it logcat only returns
+     * our own lines, which is not useful here.
+     */
+    fun canReadOtherAppLogs(context: Context): Boolean =
+        context.checkSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
 
     fun hasAllFilesAccess(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager() else true
@@ -170,6 +189,7 @@ object VrcLogReader {
         fromOffset: Long = -1L,
         maxBytes: Long = MAX_TAIL_BYTES,
     ): Pair<List<LogLine>, Long> = withContext(Dispatchers.IO) {
+        if (source.logcat) return@withContext readLogcat() to 0L
         runCatching {
             val length = currentLength(context, source)
             if (length <= 0L) return@runCatching emptyList<LogLine>() to 0L
@@ -226,6 +246,42 @@ object VrcLogReader {
         return ByteArray(0)
     }
 
+    // ── Logcat ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Snapshots the tail of logcat. The command is a fixed argument list with no user input
+     * anywhere in it, so there is nothing to inject.
+     *
+     * [onlyUnityTag] keeps the output to Unity's tag, which on a headset means VRChat and
+     * very little else. Turning it off returns everything the system is logging.
+     */
+    suspend fun readLogcat(maxLines: Int = 600, onlyUnityTag: Boolean = true): List<LogLine> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val command = mutableListOf("logcat", "-d", "-v", "threadtime", "-t", maxLines.toString())
+                if (onlyUnityTag) command += listOf("Unity:V", "*:S")
+                val process = ProcessBuilder(command).redirectErrorStream(true).start()
+                val raw = process.inputStream.bufferedReader().use { it.readLines() }
+                process.waitFor()
+                raw.asSequence()
+                    .filter { it.isNotBlank() && !it.startsWith("--------") }
+                    .map(::parseLogcatLine)
+                    .toList()
+            }.getOrElse { emptyList() }
+        }
+
+    /** logcat threadtime format: `MM-DD HH:MM:SS.mmm  PID  TID L TAG: message`. */
+    fun parseLogcatLine(raw: String): LogLine {
+        val match = LOGCAT_HEADER.find(raw) ?: return LogLine(raw, null, Level.OTHER, raw.trim())
+        val level = when (match.groupValues[2]) {
+            "W" -> Level.WARNING
+            "E" -> Level.ERROR
+            "F" -> Level.EXCEPTION
+            else -> Level.LOG
+        }
+        return LogLine(raw, match.groupValues[1], level, match.groupValues[4].trim())
+    }
+
     // ── Parsing ─────────────────────────────────────────────────────────────────
 
     /**
@@ -272,4 +328,7 @@ object VrcLogReader {
     }
 
     private val HEADER = Regex("""^(\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)\s+-\s+""")
+
+    private val LOGCAT_HEADER =
+        Regex("""^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+\d+\s+\d+\s+([VDIWEF])\s+([^:]*):\s?(.*)$""")
 }

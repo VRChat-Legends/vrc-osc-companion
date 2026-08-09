@@ -94,16 +94,40 @@ fun LogsScreen(viewModel: AppViewModel) {
             title = "Access",
             subtitle = status,
         ) {
+            val logcatGranted = remember { VrcLogReader.canReadOtherAppLogs(context) }
+            LabelledValue("Logcat access", if (logcatGranted) "Granted" else "Not granted")
             LabelledValue("All files access", if (VrcLogReader.hasAllFilesAccess()) "Granted" else "Not granted")
             LabelledValue(
                 "Picked folder",
                 if (settings.logFolderUri.isBlank()) "None" else "Set",
             )
 
+            if (!logcatGranted) {
+                Text(
+                    "VRChat on Quest does not write a log file. Its output goes to logcat, and " +
+                        "Android only lets one app read another's logcat with a permission that " +
+                        "cannot be granted from inside an app. Run this once from a PC with the " +
+                        "headset plugged in and Developer Mode on:",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    VrcLogReader.GRANT_COMMAND,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = Warn,
+                )
+                Text(
+                    "It survives reboots but not a reinstall. Add .debug to the package name for " +
+                        "sideloaded debug builds.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { viewModel.scanLogs() }) { Text("Scan") }
                 OutlinedButton(onClick = { folderPicker.launch(VrcLogReader.openTreeIntent()) }) {
-                    Text("Pick VRChat folder")
+                    Text("Pick a log folder")
                 }
                 VrcLogReader.allFilesAccessIntent(context)?.let { intent ->
                     OutlinedButton(onClick = { allFilesLauncher.launch(intent) }) {
@@ -113,8 +137,8 @@ fun LogsScreen(viewModel: AppViewModel) {
             }
 
             Text(
-                "Android walls off one app's storage from another, so VRChat's folder has to be handed " +
-                    "over deliberately. Pick this path if the scan finds nothing:",
+                "The folder picker is only useful for log files copied onto the headset, or for " +
+                    "desktop VRChat logs. These are the paths that get probed:",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -127,12 +151,6 @@ fun LogsScreen(viewModel: AppViewModel) {
                     )
                 }
             }
-            Text(
-                "Meta Developer Mode has to be on for VRChat to write a readable log in the first place. " +
-                    "If the folder is empty, launch VRChat once and scan again.",
-                style = MaterialTheme.typography.labelSmall,
-                color = Warn,
-            )
         }
 
         if (sources.isNotEmpty()) {

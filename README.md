@@ -39,12 +39,34 @@ notification is what keeps OSC alive. This is not optional and there is no toggl
 Most of the app works without it. These do not:
 
 * Now playing in your chatbox
-* Reading VRChat's log files
+* Reading VRChat's log (see below)
 * Sideloading a build that did not come from the store
 
 Turn it on in the Meta Horizon phone app: **Menu > Devices > your headset > Headset
 settings > Developer Mode**. A free verified developer organisation on your Meta account
 is required first.
+
+## VRChat logs on Quest
+
+Verified on a Quest 3S: VRChat's package is `com.vrchat.oculus.quest` and it writes **no
+log file at all**. Nothing resembling `output_log*.txt` exists anywhere under its files
+directory. The Unity output goes to **logcat**.
+
+Android only lets one app read another app's logcat with `android.permission.READ_LOGS`,
+which has the `development` protection flag. That cannot be granted by tapping a dialog,
+it has to come over adb, which is exactly why Developer Mode is required. Run this once
+with the headset plugged into a PC:
+
+```bash
+adb shell pm grant com.vrchatlegends.osccompanion android.permission.READ_LOGS
+```
+
+The grant survives reboots but not a reinstall. For sideloaded debug builds the package is
+`com.vrchatlegends.osccompanion.debug`.
+
+Without the grant the Logs tab still opens, but logcat will only return this app's own
+lines. The file reader remains as a fallback for logs copied onto the headset or pulled
+from desktop VRChat.
 
 ## PC Link
 
