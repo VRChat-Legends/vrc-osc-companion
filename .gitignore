@@ -30,3 +30,4 @@ secrets.properties
 # Python reference tooling
 __pycache__/
 *.pyc
+tools/boop_counts.json
