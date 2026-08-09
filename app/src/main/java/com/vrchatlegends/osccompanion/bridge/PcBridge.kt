@@ -1,11 +1,13 @@
 package com.vrchatlegends.osccompanion.bridge
 
+import android.util.Log
 import com.vrchatlegends.osccompanion.osc.OscArg
 import com.vrchatlegends.osccompanion.osc.OscCodec
 import com.vrchatlegends.osccompanion.osc.OscMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,6 +15,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -45,6 +49,13 @@ class PcBridge(
     private val onError: (String) -> Unit,
 ) {
 
+    /**
+     * The receive loop gets its own scope rather than sharing the repository's. Sharing meant
+     * an unrelated OSC restart could cancel the loop while the socket stayed bound, which
+     * left packets piling up in the kernel queue until they were dropped.
+     */
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     data class Config(
         val enabled: Boolean = false,
         val pcHost: String = "",
@@ -74,6 +85,7 @@ class PcBridge(
         val lastUplinkMs: Long = 0,
         val lastDownlinkMs: Long = 0,
         val lastDownlinkAddress: String? = null,
+        val lastRejectedFrom: String? = null,
         val error: String? = null,
     ) {
         val pcSeen: Boolean
@@ -86,10 +98,23 @@ class PcBridge(
     @Volatile private var config = Config()
     @Volatile private var socket: DatagramSocket? = null
     @Volatile private var pcTarget: InetSocketAddress? = null
-    @Volatile private var pcAddressLiteral: String? = null
+
+    /**
+     * Kept as an [InetAddress] rather than a string. The socket binds dual stack, so an IPv4
+     * sender can surface as an IPv4-mapped IPv6 address, and comparing text would silently
+     * reject every packet the PC sends.
+     */
+    @Volatile private var pcAddress: InetAddress? = null
 
     private var receiveJob: Job? = null
     private var announceJob: Job? = null
+
+    /**
+     * Settings can emit several times in a few milliseconds, and without this two callers
+     * interleaved: one closed the socket the other had just started reading, leaving the
+     * port bound with no reader while packets piled up in the kernel queue.
+     */
+    private val lifecycle = Mutex()
 
     private val uplinkSent = AtomicLong(0)
     private val uplinkDropped = AtomicLong(0)
@@ -106,41 +131,50 @@ class PcBridge(
      * it actually changed. Callers may invoke this on every settings emission.
      */
     suspend fun apply(newConfig: Config, localIp: String) {
-        val previous = config
-        config = newConfig
+        lifecycle.withLock {
+            val previous = config
+            config = newConfig
 
-        if (!newConfig.enabled || newConfig.pcHost.isBlank()) {
-            if (isRunning) stop()
-            return
+            if (!newConfig.enabled || newConfig.pcHost.isBlank()) {
+                if (isRunning) stopLocked()
+                return
+            }
+
+            val needsRestart = !isRunning ||
+                previous.listenPort != newConfig.listenPort ||
+                previous.pcHost != newConfig.pcHost ||
+                previous.pcPort != newConfig.pcPort ||
+                previous.announce != newConfig.announce
+
+            if (needsRestart) startLocked(localIp)
         }
-
-        val needsRestart = !isRunning ||
-            previous.listenPort != newConfig.listenPort ||
-            previous.pcHost != newConfig.pcHost ||
-            previous.pcPort != newConfig.pcPort ||
-            previous.announce != newConfig.announce
-
-        if (needsRestart) start(localIp)
     }
 
-    suspend fun start(localIp: String) = withContext(Dispatchers.IO) {
-        stop()
+    suspend fun start(localIp: String) = lifecycle.withLock { startLocked(localIp) }
+
+    suspend fun stop() = lifecycle.withLock { stopLocked() }
+
+    private suspend fun startLocked(localIp: String) = withContext(Dispatchers.IO) {
+        stopLocked()
         val cfg = config
         if (!cfg.enabled || cfg.pcHost.isBlank()) return@withContext
 
         runCatching {
             val resolved = InetAddress.getByName(cfg.pcHost)
-            pcAddressLiteral = resolved.hostAddress
+            pcAddress = resolved
             pcTarget = InetSocketAddress(resolved, cfg.pcPort)
 
+            // No reuseAddress here. On Android a second bind to a UDP port that is still
+            // lingering succeeds and then silently receives nothing, which is impossible to
+            // tell apart from a network problem. Failing loudly is better.
             val s = DatagramSocket(null).apply {
-                reuseAddress = true
                 bind(InetSocketAddress(cfg.listenPort))
             }
             socket = s
-            receiveJob = scope.launch(Dispatchers.IO) { receiveLoop(s) }
+            Log.i(TAG, "bound downlink :${s.localPort}, uplink to ${cfg.pcHost}:${cfg.pcPort}")
+            receiveJob = ioScope.launch { receiveLoop(s) }
             if (cfg.announce) {
-                announceJob = scope.launch(Dispatchers.IO) { announceLoop(localIp) }
+                announceJob = ioScope.launch { announceLoop(localIp) }
             }
             _stats.update {
                 it.copy(
@@ -153,13 +187,15 @@ class PcBridge(
             onEvent("Bridge up: VRChat -> ${cfg.pcHost}:${cfg.pcPort}, PC -> :${s.localPort}")
         }.onFailure {
             val message = "Bridge could not bind :${cfg.listenPort}: ${it.message}"
+            Log.e(TAG, message, it)
             _stats.update { s -> s.copy(running = false, error = message) }
             onError(message)
         }
         Unit
     }
 
-    fun stop() {
+    private fun stopLocked() {
+        Log.i(TAG, "stopping bridge")
         receiveJob?.cancel()
         receiveJob = null
         announceJob?.cancel()
@@ -167,7 +203,7 @@ class PcBridge(
         socket?.close()
         socket = null
         pcTarget = null
-        pcAddressLiteral = null
+        pcAddress = null
         lastSentPerAddress.clear()
         _stats.update { it.copy(running = false, listenPort = 0) }
     }
@@ -193,7 +229,7 @@ class PcBridge(
         }
 
         val bytes = OscCodec.encode(message)
-        scope.launch(Dispatchers.IO) {
+        ioScope.launch {
             runCatching {
                 s.send(DatagramPacket(bytes, bytes.size, dest))
                 uplinkSent.incrementAndGet()
@@ -238,17 +274,24 @@ class PcBridge(
     @Volatile var onDownlink: ((OscMessage) -> Unit)? = null
 
     private suspend fun receiveLoop(s: DatagramSocket) {
+        Log.i(TAG, "downlink loop up on :${s.localPort}")
         val buffer = ByteArray(65_507)
         val packet = DatagramPacket(buffer, buffer.size)
-        while (scope.isActive && !s.isClosed) {
+        // Deliberately not gated on the caller's scope: only a closed socket ends this loop.
+        while (!s.isClosed) {
             try {
                 packet.length = buffer.size
                 s.receive(packet)
-                val source = packet.address?.hostAddress ?: ""
 
-                if (config.restrictToPcHost && source != pcAddressLiteral) {
+                if (config.restrictToPcHost && !isFromConfiguredPc(packet.address)) {
+                    Log.w(TAG, "rejected packet from ${packet.address?.hostAddress}")
                     downlinkRejected.incrementAndGet()
-                    _stats.update { it.copy(downlinkRejected = downlinkRejected.get()) }
+                    _stats.update {
+                        it.copy(
+                            downlinkRejected = downlinkRejected.get(),
+                            lastRejectedFrom = packet.address?.hostAddress,
+                        )
+                    }
                     continue
                 }
 
@@ -260,6 +303,7 @@ class PcBridge(
                         continue
                     }
                     downlinkReceived.incrementAndGet()
+                    Log.i(TAG, "downlink ${msg.address} -> VRChat")
                     _stats.update {
                         it.copy(
                             downlinkReceived = downlinkReceived.get(),
@@ -271,10 +315,26 @@ class PcBridge(
                     onDownlink?.invoke(msg)
                 }
             } catch (e: Exception) {
-                if (s.isClosed) return
+                if (s.isClosed) {
+                    Log.i(TAG, "downlink loop ending, socket closed")
+                    return
+                }
+                Log.e(TAG, "downlink receive error", e)
                 onError("Bridge receive error: ${e.message}")
             }
         }
+        Log.i(TAG, "downlink loop exited")
+    }
+
+    /**
+     * Matches on the raw address bytes so an IPv4 sender still matches when it arrives in
+     * IPv4-mapped IPv6 form, which is what a dual stack bind produces.
+     */
+    private fun isFromConfiguredPc(source: InetAddress?): Boolean {
+        val expected = pcAddress ?: return false
+        if (source == null) return false
+        if (source == expected) return true
+        return source.address.contentEquals(expected.address)
     }
 
     // ── Announce ────────────────────────────────────────────────────────────────
@@ -284,7 +344,7 @@ class PcBridge(
      * reply on without the user typing anything. Sent to the same place as the uplink.
      */
     private suspend fun announceLoop(localIp: String) {
-        while (scope.isActive) {
+        while (true) {
             val s = socket
             val dest = pcTarget
             if (s != null && dest != null && !s.isClosed) {
@@ -304,6 +364,7 @@ class PcBridge(
     }
 
     companion object {
+        private const val TAG = "PcBridge"
         const val DEFAULT_PC_PORT = 9001
         const val DEFAULT_LISTEN_PORT = 9100
         const val ANNOUNCE_ADDRESS = "/vrcosc/bridge/hello"

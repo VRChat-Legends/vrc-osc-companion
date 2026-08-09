@@ -141,7 +141,9 @@ class OscRepository private constructor(private val appContext: Context) {
     }
 
     private suspend fun restart() {
-        stopInternal()
+        // The bridge is deliberately left alone here: it owns its own socket and has no
+        // reason to drop the PC link just because the VRChat side re-bound.
+        stopInternal(stopBridge = false)
         transport.start(settings.oscReceivePort)
         retarget()
 
@@ -171,17 +173,17 @@ class OscRepository private constructor(private val appContext: Context) {
     }
 
     fun stop() {
-        scope.launch { stopInternal() }
+        scope.launch { stopInternal(stopBridge = true) }
     }
 
-    private fun stopInternal() {
+    private suspend fun stopInternal(stopBridge: Boolean) {
         chatboxJob?.cancel()
         chatboxJob = null
         discovery?.stop()
         discovery = null
         queryServer?.stop()
         queryServer = null
-        bridge.stop()
+        if (stopBridge) bridge.stop()
         transport.stop()
         _connection.update { it.copy(running = false, listenPort = 0, oscQueryHttpPort = 0) }
     }

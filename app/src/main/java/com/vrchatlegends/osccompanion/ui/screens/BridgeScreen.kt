@@ -105,6 +105,9 @@ fun BridgeScreen(viewModel: AppViewModel) {
             LabelledValue("Received from PC", "${stats.downlinkReceived}")
             LabelledValue("Rejected", "${stats.downlinkRejected}")
             stats.lastDownlinkAddress?.let { LabelledValue("Last from PC", it) }
+            stats.lastRejectedFrom?.let {
+                LabelledValue("Last rejected source", it, valueColor = Bad)
+            }
             stats.error?.let { Text(it, color = Bad, style = MaterialTheme.typography.bodyMedium) }
         }
 
