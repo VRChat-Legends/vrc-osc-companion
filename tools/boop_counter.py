@@ -312,13 +312,12 @@ def render_message(stats: dict, ascii_only: bool = False) -> str:
         + B O O P S +
             1,337
          ~ L E E T ~
-        today 42 . best 128
-        18.4 a day over 71 days
+          today 42
 
     Everything past the headline is optional and gets dropped by clamp_chatbox if the
     numbers grow long enough to threaten the 144 character budget.
     """
-    star, dot, wing = ("*", ".", "~") if ascii_only else ("\u2726", "\u00b7", "\u2727")
+    star, wing = ("*", "~") if ascii_only else ("\u2726", "\u2727")
     total = stats["total"]
     lines = [f"{star} B O O P S {star}", f"{total:,}"]
 
@@ -326,10 +325,7 @@ def render_message(stats: dict, ascii_only: bool = False) -> str:
     if label:
         lines.append(f"{wing} {label} {wing}")
 
-    lines.append(f"today {stats['today']:,} {dot} best {stats['best']:,}")
-
-    days = stats["days"]
-    lines.append(f"{stats['avg']:,} a day over {days:,} day{'' if days == 1 else 's'}")
+    lines.append(f"today {stats['today']:,}")
 
     return "\n".join(lines)
 
