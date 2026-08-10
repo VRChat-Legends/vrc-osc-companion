@@ -1,7 +1,9 @@
 package com.vrchatlegends.osccompanion.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.vrchatlegends.osccompanion.bridge.PcBridge
@@ -20,15 +22,18 @@ import com.vrchatlegends.osccompanion.service.OscForegroundService
 import com.vrchatlegends.osccompanion.status.DeviceStats
 import com.vrchatlegends.osccompanion.status.StatusComposer
 import com.vrchatlegends.osccompanion.vrcl.CommunityRepository
+import com.vrchatlegends.osccompanion.vrcl.LeaderboardRepository
 import com.vrchatlegends.osccompanion.vrcl.VrclAuth
 import com.vrchatlegends.osccompanion.vrcl.VrclClient
 import com.vrchatlegends.osccompanion.vrcl.VrclEvent
+import com.vrchatlegends.osccompanion.vrcl.VrclLiveFeed
 import com.vrchatlegends.osccompanion.vrcl.VrclProfile
 import com.vrchatlegends.osccompanion.vrchat.VrchatClient
 import com.vrchatlegends.osccompanion.vrchat.VrchatSessionStore
 import com.vrchatlegends.osccompanion.vrchat.VrchatToolsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +43,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -64,6 +70,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val heartRate: StateFlow<HeartRateState> get() = pulsoid.state
 
     private val vrclClient = VrclClient { settings.value.vrclToken.takeIf { it.isNotBlank() } }
+    private val vrclLive = VrclLiveFeed { settings.value.vrclToken.takeIf { it.isNotBlank() } }
 
     val vrchatTools = VrchatToolsRepository(
         scope = viewModelScope,
@@ -73,7 +80,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val community = CommunityRepository(
         scope = viewModelScope,
         client = vrclClient,
+        live = vrclLive,
         isSignedIn = { settings.value.vrclToken.isNotBlank() },
+    )
+
+    val leaderboard = LeaderboardRepository(
+        scope = viewModelScope,
+        client = vrclClient,
     )
 
     private val _profile = MutableStateFlow<VrclProfile?>(null)
@@ -118,6 +131,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (initial.autoConnect) connect()
             if (initial.vrclToken.isNotBlank()) refreshProfile()
         }
+        startHeartbeat()
         vrchatTools.restoreSession()
     }
 
@@ -249,13 +263,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signInWithApiKey(key: String) {
-        viewModelScope.launch {
-            settingsStore.setVrclSession(key.trim(), "")
-            refreshProfile()
-        }
-    }
-
     fun refreshProfile() {
         viewModelScope.launch {
             vrclClient.me()
@@ -270,6 +277,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _profile.value = null
                     _authError.value = it.message ?: "Could not load profile"
                 }
+        }
+    }
+
+    /**
+     * Keeps the device row fresh and is what credits time to the usage leaderboard. The
+     * backend clamps the gap between beats, so this interval is the unit of credited time.
+     */
+    private fun startHeartbeat() {
+        viewModelScope.launch {
+            while (isActive) {
+                if (settings.value.vrclToken.isNotBlank()) {
+                    vrclClient.heartbeat(installId, Build.MODEL ?: "Headset")
+                }
+                delay(HEARTBEAT_INTERVAL_MS)
+            }
+        }
+    }
+
+    /** Stable per-install id so the backend can tell devices apart without identifying hardware. */
+    private val installId: String by lazy {
+        val prefs = getApplication<Application>()
+            .getSharedPreferences("companion-install", Context.MODE_PRIVATE)
+        prefs.getString("installId", null) ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString("installId", it).apply()
         }
     }
 
@@ -382,5 +413,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val LOG_LINE_CAPACITY = 1_000
         const val LOG_TAIL_INTERVAL_MS = 2_000L
+        const val HEARTBEAT_INTERVAL_MS = 60_000L
     }
 }

@@ -33,7 +33,11 @@ android {
 
         vectorDrawables.useSupportLibrary = true
 
+        // Site links go to the public site, but every API and OAuth call must hit the API host
+        // directly. Going through vrchatlegends.com relies on a Next.js rewrite that Cloudflare
+        // caches, which served a cached HTML shell for the OAuth redirect (white screen + 403).
         buildConfigField("String", "VRCL_BASE_URL", "\"https://vrchatlegends.com\"")
+        buildConfigField("String", "VRCL_API_BASE_URL", "\"https://api.vrchatlegends.com\"")
         buildConfigField("String", "AUTH_REDIRECT_SCHEME", "\"vrcoscc\"")
         buildConfigField("String", "UPDATE_MANIFEST_URL", "\"https://raw.githubusercontent.com/VRChat-Legends/vrc-osc-companion/main/update.json\"")
     }

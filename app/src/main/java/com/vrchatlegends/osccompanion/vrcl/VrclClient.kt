@@ -53,6 +53,52 @@ data class VrclPost(
 )
 
 /**
+ * A shared preset from /api/companion/scripts. Deliberately not code: the backend only
+ * lets a script express chatbox lines, the user's own avatar parameters, and waits.
+ */
+data class VrclScript(
+    val id: String,
+    val title: String,
+    val summary: String?,
+    val tags: List<String>,
+    val steps: List<VrclScriptStep>,
+    val authorName: String,
+    val authorAvatarUrl: String?,
+    val installs: Int,
+    val likeCount: Int,
+    val viewerLiked: Boolean,
+    val canEdit: Boolean,
+)
+
+data class VrclScriptStep(
+    val type: String,
+    val text: String? = null,
+    val address: String? = null,
+    val value: String? = null,
+    val ms: Int? = null,
+) {
+    /** One line the UI can show without knowing the step vocabulary. */
+    val describe: String
+        get() = when (type) {
+            "chatbox" -> "Chatbox: ${text.orEmpty()}"
+            "wait" -> "Wait ${(ms ?: 0)} ms"
+            else -> "${address?.removePrefix("/avatar/parameters/").orEmpty()} = ${value.orEmpty()}"
+        }
+}
+
+/** One row of the in-app usage leaderboard. */
+data class VrclUsageEntry(
+    val playerId: String,
+    val rank: Int,
+    val displayName: String,
+    val avatarUrl: String?,
+    val rangeSeconds: Long,
+    val totalSeconds: Long,
+    val streakDays: Int,
+    val isViewer: Boolean,
+)
+
+/**
  * Who the signed-in account is on the social side. Posting goes to a Legend profile, not
  * the account, so [playerId] is what decides whether the composer can be shown at all.
  */
@@ -67,9 +113,9 @@ data class VrclSocialIdentity(
 /**
  * Thin read-only client for the VRChat Legends API.
  *
- * Sessions are `Authorization: Bearer <jwt>`; the same header also accepts a
- * `vrcl_`-prefixed personal API key, which is the fallback when the OAuth deep link is
- * blocked by a locked-down browser.
+ * Sessions are `Authorization: Bearer <jwt>` obtained from the OAuth deep link. Calls go
+ * straight to the API host: the public site only proxies /api through a Next.js rewrite
+ * that sits behind Cloudflare's cache.
  */
 class VrclClient(private val tokenProvider: () -> String?) {
 
@@ -119,7 +165,7 @@ class VrclClient(private val tokenProvider: () -> String?) {
     suspend fun logout(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder()
-                .url(BuildConfig.VRCL_BASE_URL + "/api/auth/logout")
+                .url(BuildConfig.VRCL_API_BASE_URL + "/api/auth/logout")
                 .post("{}".toRequestBody("application/json".toMediaType()))
                 .authorized()
                 .build()
@@ -170,6 +216,70 @@ class VrclClient(private val tokenProvider: () -> String?) {
         return post("/api/players/${encode(playerId)}/feed", payload)
     }
 
+    /** Community scripts. Open to signed-out users so the tab is never empty. */
+    suspend fun communityScripts(sort: String = "recent", query: String = ""): Result<List<VrclScript>> {
+        val q = if (query.isBlank()) "" else "&q=${encode(query)}"
+        return request("/api/companion/scripts?sort=$sort&limit=50$q") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["scripts"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val author = obj["author"] as? JsonObject
+                VrclScript(
+                    id = obj.str("id") ?: return@mapNotNull null,
+                    title = obj.str("title") ?: "Untitled",
+                    summary = obj.str("summary"),
+                    tags = (obj["tags"] as? JsonArray).orEmpty().mapNotNull { it.jsonPrimitive.contentOrNull },
+                    steps = (obj["steps"] as? JsonArray).orEmpty().mapNotNull { step ->
+                        val s = step as? JsonObject ?: return@mapNotNull null
+                        VrclScriptStep(
+                            type = s.str("type") ?: return@mapNotNull null,
+                            text = s.str("text"),
+                            address = s.str("address"),
+                            value = (s["value"] as? JsonPrimitive)?.contentOrNull,
+                            ms = s.int("ms"),
+                        )
+                    },
+                    authorName = author?.str("name") ?: "Unknown Legend",
+                    authorAvatarUrl = author?.str("avatarUrl"),
+                    installs = obj.int("installs") ?: 0,
+                    likeCount = obj.int("likeCount") ?: 0,
+                    viewerLiked = obj.bool("viewerLiked"),
+                    canEdit = obj.bool("canEdit"),
+                )
+            }
+        }
+    }
+
+    suspend fun likeScript(id: String): Result<Unit> = post("/api/companion/scripts/${encode(id)}/like", "{}")
+
+    /** Time-in-app ranking. Only Legends with a linked profile appear. */
+    suspend fun usageLeaderboard(range: String = "all"): Result<List<VrclUsageEntry>> =
+        request("/api/companion/usage/leaderboard?range=$range&limit=50") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["entries"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                VrclUsageEntry(
+                    playerId = obj.str("playerId") ?: return@mapNotNull null,
+                    rank = obj.int("rank") ?: 0,
+                    displayName = obj.str("displayName") ?: obj.str("playerId").orEmpty(),
+                    avatarUrl = obj.str("avatarUrl"),
+                    rangeSeconds = (obj.int("rangeSeconds") ?: 0).toLong(),
+                    totalSeconds = (obj.int("totalSeconds") ?: 0).toLong(),
+                    streakDays = obj.int("streakDays") ?: 0,
+                    isViewer = obj.bool("isViewer"),
+                )
+            }
+        }
+
+    /** Keeps the device row fresh and is what credits time to the leaderboard. */
+    suspend fun heartbeat(installId: String, label: String): Result<Unit> {
+        val payload = buildJsonObject {
+            put("installId", JsonPrimitive(installId))
+            put("deviceLabel", JsonPrimitive(label))
+        }.toString()
+        return post("/api/companion/heartbeat", payload)
+    }
+
     suspend fun likePost(playerId: String, postId: String): Result<Unit> =
         post("/api/players/${encode(playerId)}/feed/${encode(postId)}/like", "{}")
 
@@ -177,7 +287,7 @@ class VrclClient(private val tokenProvider: () -> String?) {
         withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
-                    .url(BuildConfig.VRCL_BASE_URL + path)
+                    .url(BuildConfig.VRCL_API_BASE_URL + path)
                     .post(payload.toRequestBody("application/json".toMediaType()))
                     .authorized()
                     .build()
@@ -200,7 +310,7 @@ class VrclClient(private val tokenProvider: () -> String?) {
         withContext(Dispatchers.IO) {
             runCatching {
                 val request = Request.Builder()
-                    .url(BuildConfig.VRCL_BASE_URL + path)
+                    .url(BuildConfig.VRCL_API_BASE_URL + path)
                     .get()
                     .authorized()
                     .build()
@@ -219,17 +329,19 @@ class VrclClient(private val tokenProvider: () -> String?) {
         header("User-Agent", "VRC-OSC-Companion/${BuildConfig.VERSION_NAME} (Quest)")
         tokenProvider()?.takeIf { it.isNotBlank() }?.let { header("Authorization", "Bearer $it") }
     }
-
-    private fun JsonObject.str(key: String): String? =
-        (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-
-    private fun JsonObject.bool(key: String): Boolean =
-        (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
-
-    private fun JsonObject.firstMediaUrl(): String? =
-        (this["media"] as? JsonArray)
-            ?.firstNotNullOfOrNull { (it as? JsonObject)?.let { m -> m.str("url") ?: m.str("src") } }
-
-    private fun JsonObject.int(key: String): Int? =
-        (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull
 }
+
+// File level so VrclLiveFeed can parse the same post shape off the WebSocket.
+
+internal fun JsonObject.str(key: String): String? =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+
+internal fun JsonObject.bool(key: String): Boolean =
+    (this[key] as? JsonPrimitive)?.booleanOrNull ?: false
+
+internal fun JsonObject.firstMediaUrl(): String? =
+    (this["media"] as? JsonArray)
+        ?.firstNotNullOfOrNull { (it as? JsonObject)?.let { m -> m.str("url") ?: m.str("src") } }
+
+internal fun JsonObject.int(key: String): Int? =
+    (this[key] as? JsonPrimitive)?.intOrNull

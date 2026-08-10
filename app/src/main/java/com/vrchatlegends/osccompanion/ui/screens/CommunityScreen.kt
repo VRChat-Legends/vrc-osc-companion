@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -29,17 +30,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -47,6 +52,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -74,8 +81,13 @@ import com.vrchatlegends.osccompanion.ui.theme.Bad
 import com.vrchatlegends.osccompanion.ui.theme.Good
 import com.vrchatlegends.osccompanion.ui.theme.SignalCoral
 import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
+import com.vrchatlegends.osccompanion.vrcl.CommunityRepository
+import com.vrchatlegends.osccompanion.vrcl.CommunitySection
 import com.vrchatlegends.osccompanion.vrcl.CommunityState
+import com.vrchatlegends.osccompanion.vrcl.FeedMode
+import com.vrchatlegends.osccompanion.vrcl.ScriptSort
 import com.vrchatlegends.osccompanion.vrcl.VrclPost
+import com.vrchatlegends.osccompanion.vrcl.VrclScript
 import kotlinx.coroutines.launch
 
 private const val SOCIAL_URL = "https://vrchatlegends.com/social"
@@ -84,12 +96,17 @@ private const val MAX_POST_LENGTH = 500
 @Composable
 fun CommunityScreen(viewModel: AppViewModel) {
     val state by viewModel.community.state.collectAsStateWithLifecycle()
+    val leaderboard by viewModel.leaderboard.state.collectAsStateWithLifecycle()
     val repository = viewModel.community
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { repository.loadOnce() }
+    LaunchedEffect(state.section) {
+        if (state.section == CommunitySection.LEADERBOARD) viewModel.leaderboard.loadOnce()
+    }
+    LaunchedEffect(state.section, state.feedMode) { listState.scrollToItem(0) }
 
     val showBackToTop by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
 
@@ -105,11 +122,13 @@ fun CommunityScreen(viewModel: AppViewModel) {
             item(key = "header") {
                 ScreenHeader(
                     title = "Community",
-                    subtitle = "The VRChat Legends feed, in the headset",
+                    subtitle = "The VRChat Legends feed and shared scripts, in the headset",
                 )
             }
 
-            item(key = "toolbar") { FeedToolbar(state, repository::refresh) }
+            item(key = "sections") {
+                SectionTabs(state.section, repository::selectSection)
+            }
 
             item(key = "messages") {
                 AnimatedVisibility(
@@ -121,21 +140,10 @@ fun CommunityScreen(viewModel: AppViewModel) {
                 }
             }
 
-            item(key = "composer") {
-                Composer(
-                    state = state,
-                    draft = draft,
-                    onDraftChange = { draft = it },
-                    onPost = { repository.post(draft) { draft = "" } },
-                )
-            }
-
-            if (state.posts.isEmpty() && state.loaded) {
-                item(key = "empty") { FeedEmpty(state.error != null) }
-            }
-
-            items(state.posts, key = { it.key }) { post ->
-                PostRow(post, onLike = { repository.like(post) })
+            when (state.section) {
+                CommunitySection.SOCIAL -> socialItems(state, repository, draft, { draft = it })
+                CommunitySection.SCRIPTS -> scriptItems(state, repository)
+                CommunitySection.LEADERBOARD -> leaderboardItems(leaderboard, viewModel.leaderboard)
             }
         }
 
@@ -152,6 +160,239 @@ fun CommunityScreen(viewModel: AppViewModel) {
                 icon = { Icon(Icons.Filled.ArrowUpward, contentDescription = null) },
                 text = { Text("Back to top") },
                 containerColor = SignalCoral,
+            )
+        }
+    }
+}
+
+private fun LazyListScope.socialItems(
+    state: CommunityState,
+    repository: CommunityRepository,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+) {
+    item(key = "feed-modes") { FeedModeTabs(state, repository::selectFeedMode) }
+
+    item(key = "toolbar") { FeedToolbar(state, repository::refresh) }
+
+    item(key = "pending") {
+        // The X-style pill: live posts wait here so the timeline never jumps while reading.
+        AnimatedVisibility(
+            visible = state.pending.isNotEmpty(),
+            enter = fadeIn() + slideInVertically { -it / 2 },
+            exit = fadeOut() + slideOutVertically { -it / 2 },
+        ) {
+            Button(
+                onClick = repository::showPending,
+                colors = ButtonDefaults.buttonColors(containerColor = SignalCyan),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Filled.ArrowUpward, contentDescription = null)
+                Text("Show ${state.pending.size} new post${if (state.pending.size == 1) "" else "s"}")
+            }
+        }
+    }
+
+    item(key = "composer") {
+        Composer(
+            state = state,
+            draft = draft,
+            onDraftChange = onDraftChange,
+            onPost = { repository.post(draft) { onDraftChange("") } },
+        )
+    }
+
+    if (state.posts.isEmpty() && state.loaded) {
+        item(key = "empty") { FeedEmpty(state.error != null) }
+    }
+
+    items(state.posts, key = { "post-${it.key}" }) { post ->
+        PostRow(post, onLike = { repository.like(post) })
+    }
+}
+
+private fun LazyListScope.scriptItems(state: CommunityState, repository: CommunityRepository) {
+    item(key = "script-toolbar") {
+        ScriptToolbar(
+            state = state,
+            onSort = repository::setScriptSort,
+            onQuery = repository::setScriptQuery,
+            onSearch = repository::refreshScripts,
+        )
+    }
+
+    if (state.scriptsLoading && state.scripts.isEmpty()) {
+        item(key = "scripts-loading") {
+            LinearProgressIndicator(Modifier.fillMaxWidth(), color = SignalCyan)
+        }
+    }
+
+    if (state.scripts.isEmpty() && state.scriptsLoaded && !state.scriptsLoading) {
+        item(key = "scripts-empty") { ScriptsEmpty(state.scriptQuery.isNotBlank()) }
+    }
+
+    items(state.scripts, key = { "script-${it.id}" }) { script ->
+        ScriptRow(script, onLike = { repository.likeScript(script) })
+    }
+}
+
+@Composable
+private fun SectionTabs(selected: CommunitySection, onSelect: (CommunitySection) -> Unit) {
+    TabRow(
+        selectedTabIndex = CommunitySection.entries.indexOf(selected),
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = SignalCoral,
+    ) {
+        CommunitySection.entries.forEach { section ->
+            Tab(
+                selected = section == selected,
+                onClick = { onSelect(section) },
+                text = { Text(section.label) },
+                icon = {
+                    Icon(
+                        when (section) {
+                            CommunitySection.SOCIAL -> Icons.Filled.Forum
+                            CommunitySection.SCRIPTS -> Icons.Filled.Code
+                            CommunitySection.LEADERBOARD -> Icons.Filled.EmojiEvents
+                        },
+                        contentDescription = null,
+                    )
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FeedModeTabs(state: CommunityState, onSelect: (FeedMode) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FeedMode.entries.forEach { mode ->
+            val active = mode == state.feedMode
+            FilterChip(
+                selected = active,
+                onClick = { onSelect(mode) },
+                label = { Text(mode.label) },
+                enabled = mode != FeedMode.FOLLOWING || state.canPost,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ScriptToolbar(
+    state: CommunityState,
+    onSort: (ScriptSort) -> Unit,
+    onQuery: (String) -> Unit,
+    onSearch: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = state.scriptQuery,
+            onValueChange = onQuery,
+            label = { Text("Search scripts") },
+            singleLine = true,
+            trailingIcon = {
+                IconButton(onClick = onSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search")
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ScriptSort.entries.forEach { sort ->
+                FilterChip(
+                    selected = sort == state.scriptSort,
+                    onClick = { onSort(sort) },
+                    label = { Text(sort.label) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScriptRow(script: VrclScript, onLike: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(script.authorAvatarUrl, script.authorName, 36)
+                Column(Modifier.weight(1f)) {
+                    Text(script.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "by ${script.authorName}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = onLike) {
+                    Icon(
+                        if (script.viewerLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = "Like",
+                        tint = if (script.viewerLiked) SignalCoral else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(" ${script.likeCount}")
+                }
+            }
+
+            script.summary?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${script.steps.size} step${if (script.steps.size == 1) "" else "s"} | ${script.installs} installs",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "Hide steps" else "Show steps")
+                }
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    script.steps.forEachIndexed { index, step ->
+                        Text(
+                            "${index + 1}. ${step.describe}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScriptsEmpty(filtered: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                if (filtered) "Nothing matches that search" else "No community scripts yet",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                if (filtered) {
+                    "Try a shorter search, or clear it to see everything."
+                } else {
+                    "Scripts are shareable chatbox and avatar parameter presets. Publish one from the website."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -353,7 +594,7 @@ private fun PostRow(post: VrclPost, onLike: () -> Unit) {
 }
 
 @Composable
-private fun Avatar(url: String?, name: String, size: Int) {
+internal fun Avatar(url: String?, name: String, size: Int) {
     Box(
         modifier = Modifier
             .size(size.dp)

@@ -61,9 +61,6 @@ fun AccountScreen(viewModel: AppViewModel) {
     val error by viewModel.authError.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
 
-    var apiKey by remember { mutableStateOf("") }
-    var showApiKey by remember { mutableStateOf(false) }
-
     ScreenScaffold(
         title = "Account",
         subtitle = "VRChat Legends events and community features, optional for OSC",
@@ -133,39 +130,6 @@ fun AccountScreen(viewModel: AppViewModel) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-
-            OutlinedButton(onClick = { showApiKey = !showApiKey }) {
-                Icon(Icons.Filled.Api, contentDescription = null)
-                Text(if (showApiKey) "Hide API key sign-in" else "Advanced: use an API key")
-            }
-
-            AnimatedVisibility(visible = showApiKey) {
-                SectionCard(
-                    title = "API key",
-                    subtitle = "Create one in Account settings on vrchatlegends.com. It starts with vrcl_",
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = apiKey,
-                            onValueChange = { apiKey = it },
-                            label = { Text("vrcl_...") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.weight(1f),
-                        )
-                        Button(
-                            onClick = {
-                                viewModel.signInWithApiKey(apiKey)
-                                apiKey = ""
-                            },
-                            enabled = apiKey.isNotBlank(),
-                        ) {
-                            Icon(Icons.Filled.ArrowForward, contentDescription = null)
-                            Text("Use key")
-                        }
-                    }
-                }
             }
         } else {
             SectionCard(

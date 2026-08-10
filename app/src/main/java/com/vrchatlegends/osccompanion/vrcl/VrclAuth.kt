@@ -9,10 +9,14 @@ import com.vrchatlegends.osccompanion.BuildConfig
 /**
  * VRChat Legends sign-in.
  *
- * The website's OAuth start route already understands app deep links: pass
+ * The API's OAuth start route already understands app deep links: pass
  * `returnTo=vrcoscc://auth` and the callback redirects to
  * `vrcoscc://auth?session_token=<jwt>` instead of back into the web frontend. That means
  * no password is ever typed into this app and no backend change is required.
+ *
+ * This must talk to the API host directly. vrchatlegends.com only proxies /api via a
+ * Next.js rewrite, and Cloudflare caches that path, so the OAuth redirect came back as a
+ * cached HTML shell instead of a 302 to Discord.
  *
  * If the account has 2FA the browser lands on the website's 2FA page first and only then
  * follows the deep link, so the Custom Tab has to stay open until we get the callback.
@@ -29,7 +33,7 @@ object VrclAuth {
     data class AuthProvider(val id: String, val label: String)
 
     fun startUrl(providerId: String): String =
-        Uri.parse(BuildConfig.VRCL_BASE_URL)
+        Uri.parse(BuildConfig.VRCL_API_BASE_URL)
             .buildUpon()
             .appendEncodedPath("api/oauth/$providerId/start")
             .appendQueryParameter("returnTo", REDIRECT_URI)
