@@ -19,10 +19,14 @@ import com.vrchatlegends.osccompanion.pulsoid.PulsoidClient
 import com.vrchatlegends.osccompanion.service.OscForegroundService
 import com.vrchatlegends.osccompanion.status.DeviceStats
 import com.vrchatlegends.osccompanion.status.StatusComposer
+import com.vrchatlegends.osccompanion.vrcl.CommunityRepository
 import com.vrchatlegends.osccompanion.vrcl.VrclAuth
 import com.vrchatlegends.osccompanion.vrcl.VrclClient
 import com.vrchatlegends.osccompanion.vrcl.VrclEvent
 import com.vrchatlegends.osccompanion.vrcl.VrclProfile
+import com.vrchatlegends.osccompanion.vrchat.VrchatClient
+import com.vrchatlegends.osccompanion.vrchat.VrchatSessionStore
+import com.vrchatlegends.osccompanion.vrchat.VrchatToolsRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -44,6 +49,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val settings: StateFlow<AppSettings> = settingsStore.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
+    /** Null until DataStore has emitted, so an existing user never sees first-run UI flash. */
+    val onboardingCompleted: StateFlow<Boolean?> = settingsStore.settings
+        .map { it.onboardingCompleted as Boolean? }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     val chatboxPresets: StateFlow<List<ChatboxPreset>> = presetStore.chatboxPresets
         .stateIn(viewModelScope, SharingStarted.Eagerly, PresetStore.DEFAULT_PRESETS)
 
@@ -54,6 +64,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val heartRate: StateFlow<HeartRateState> get() = pulsoid.state
 
     private val vrclClient = VrclClient { settings.value.vrclToken.takeIf { it.isNotBlank() } }
+
+    val vrchatTools = VrchatToolsRepository(
+        scope = viewModelScope,
+        client = VrchatClient(VrchatSessionStore(application)),
+    )
+
+    val community = CommunityRepository(
+        scope = viewModelScope,
+        client = vrclClient,
+        isSignedIn = { settings.value.vrclToken.isNotBlank() },
+    )
 
     private val _profile = MutableStateFlow<VrclProfile?>(null)
     val profile: StateFlow<VrclProfile?> = _profile.asStateFlow()
@@ -97,6 +118,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (initial.autoConnect) connect()
             if (initial.vrclToken.isNotBlank()) refreshProfile()
         }
+        vrchatTools.restoreSession()
     }
 
     // ── Connection ──────────────────────────────────────────────────────────────
@@ -121,6 +143,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateSettings(block: suspend SettingsStore.() -> Unit) {
         viewModelScope.launch { settingsStore.block() }
+    }
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        updateSettings { setOnboardingCompleted(completed) }
     }
 
     // ── Chatbox ─────────────────────────────────────────────────────────────────
@@ -238,6 +264,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _authError.value = null
                     settingsStore.setVrclSession(settings.value.vrclToken, p.displayName)
                     vrclClient.events().onSuccess { _vrclEvents.value = it }
+                    community.refresh()
                 }
                 .onFailure {
                     _profile.value = null
@@ -252,6 +279,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             settingsStore.clearVrclSession()
             _profile.value = null
             _vrclEvents.value = emptyList()
+            community.onSignedOut()
         }
     }
 

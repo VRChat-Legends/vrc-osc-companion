@@ -4,11 +4,13 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import com.vrchatlegends.osccompanion.diag.CrashReporter
 
 class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        CrashReporter.install(this)
         createNotificationChannel()
     }
 

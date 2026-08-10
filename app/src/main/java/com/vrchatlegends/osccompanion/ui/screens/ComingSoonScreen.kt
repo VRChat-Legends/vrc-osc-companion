@@ -1,28 +1,50 @@
 package com.vrchatlegends.osccompanion.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Construction
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vrchatlegends.osccompanion.ui.ScreenScaffold
 import com.vrchatlegends.osccompanion.ui.SectionCard
-import com.vrchatlegends.osccompanion.ui.theme.BrandCyan
+import com.vrchatlegends.osccompanion.ui.theme.SignalCoral
+import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
 
 /** A planned feature with a one line explanation of what it will do. */
 data class PlannedFeature(val title: String, val detail: String)
+
+/** A useful destination that remains available while the larger feature is being built. */
+data class AvailableAction(val label: String, val url: String, val primary: Boolean = false)
 
 /**
  * Shared placeholder for tabs that are announced but not built yet. Keeping them visible
  * sets expectations rather than shipping a surprise later.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ComingSoonScreen(
     title: String,
@@ -30,38 +52,115 @@ fun ComingSoonScreen(
     intro: String,
     features: List<PlannedFeature>,
     footnote: String? = null,
+    availableActions: List<AvailableAction> = emptyList(),
 ) {
+    val uriHandler = LocalUriHandler.current
+
     ScreenScaffold(title = title, subtitle = subtitle) {
-        SectionCard(
-            title = "Coming soon",
-            trailing = {
-                AssistChip(
-                    onClick = {},
-                    enabled = false,
-                    label = { Text("In development") },
-                    colors = AssistChipDefaults.assistChipColors(disabledLabelColor = BrandCyan),
-                )
-            },
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp),
+            color = SignalCyan.copy(alpha = 0.08f),
+            border = BorderStroke(1.dp, SignalCyan.copy(alpha = 0.28f)),
         ) {
-            Text(intro, style = MaterialTheme.typography.bodyMedium)
+            Row(
+                modifier = Modifier.padding(18.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(shape = CircleShape, color = SignalCyan.copy(alpha = 0.14f)) {
+                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Filled.Construction, contentDescription = null, tint = SignalCyan)
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("In development", style = MaterialTheme.typography.titleMedium)
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("PLANNED") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Schedule,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                        )
+                    }
+                    Text(
+                        intro,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
-        SectionCard(title = "What is planned") {
+        SectionCard(title = "Roadmap", subtitle = "The first version is scoped around these workflows") {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                features.forEach { feature ->
+                features.forEachIndexed { index, feature ->
                     Row(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.Top,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("-", style = MaterialTheme.typography.bodyLarge, color = BrandCyan)
+                        Surface(
+                            modifier = Modifier.size(32.dp),
+                            shape = CircleShape,
+                            color = if (index == 0) SignalCoral.copy(alpha = 0.14f)
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    (index + 1).toString().padStart(2, '0'),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (index == 0) SignalCoral
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
                         Column(Modifier.weight(1f)) {
-                            Text(feature.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                feature.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
                             Text(
                                 feature.detail,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (availableActions.isNotEmpty()) {
+            SectionCard(
+                title = "Available now",
+                subtitle = "These open in the Quest browser",
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    availableActions.forEach { action ->
+                        if (action.primary) {
+                            Button(onClick = { uriHandler.openUri(action.url) }) {
+                                Icon(Icons.Filled.OpenInNew, contentDescription = null)
+                                Text(action.label)
+                            }
+                        } else {
+                            OutlinedButton(onClick = { uriHandler.openUri(action.url) }) {
+                                Icon(Icons.Filled.OpenInNew, contentDescription = null)
+                                Text(action.label)
+                            }
                         }
                     }
                 }
@@ -79,65 +178,3 @@ fun ComingSoonScreen(
         }
     }
 }
-
-@Composable
-fun VrchatToolsScreen() = ComingSoonScreen(
-    title = "VRChat Tools",
-    subtitle = "Signing in to your VRChat account, straight from the headset.",
-    intro = "A second sign in, separate from VRChat Legends, that talks to the VRChat API on your " +
-        "behalf. Nothing here is live yet and no VRChat credentials are collected by this build.",
-    features = listOf(
-        PlannedFeature(
-            "Sign in to VRChat",
-            "Username and password with two factor support. The session stays on this headset and " +
-                "is never sent to VRChat Legends.",
-        ),
-        PlannedFeature(
-            "Friends and instances",
-            "See who is online and where, without leaving the panel.",
-        ),
-        PlannedFeature(
-            "Invites and requests",
-            "Accept an invite or fire one off while you are still in world.",
-        ),
-        PlannedFeature(
-            "Avatar and world favourites",
-            "Browse your favourites and jump to them.",
-        ),
-        PlannedFeature(
-            "Notifications to the chatbox",
-            "Push a friend request or invite straight into your VRChat chatbox using the OSC link " +
-                "this app already holds open.",
-        ),
-    ),
-    footnote = "The VRChat API is not officially documented for third party use, so this tab will " +
-        "stay conservative: read mostly, rate limited, and easy to turn off. Your VRChat login will " +
-        "be stored on the device only.",
-)
-
-@Composable
-fun CommunityScreen() = ComingSoonScreen(
-    title = "Community",
-    subtitle = "VRChat Legends, in the headset.",
-    intro = "The community side of VRChat Legends brought into the panel so you do not have to take " +
-        "the headset off to see what is happening.",
-    features = listOf(
-        PlannedFeature(
-            "Events",
-            "Upcoming VRChat Legends events with a one tap push to your chatbox.",
-        ),
-        PlannedFeature(
-            "Leaderboards",
-            "Where you sit, updated live.",
-        ),
-        PlannedFeature(
-            "Announcements",
-            "Site and Discord announcements without alt tabbing.",
-        ),
-        PlannedFeature(
-            "Shared presets",
-            "Chatbox and status presets other people have published.",
-        ),
-    ),
-    footnote = "Questions and suggestions go to the VRChat Legends Discord: https://discord.gg/6xPkZ7Dxp9",
-)

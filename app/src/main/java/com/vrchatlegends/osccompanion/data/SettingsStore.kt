@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 data class AppSettings(
+    val onboardingCompleted: Boolean = false,
+
     /** Empty means "follow the headset's own LAN IP", resolved at connect time. */
     val oscHost: String = "",
     val oscSendPort: Int = VrcOsc.DEFAULT_SEND_PORT,
@@ -78,6 +80,8 @@ data class AppSettings(
 class SettingsStore(private val context: Context) {
 
     private object Keys {
+        val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+
         val OSC_HOST = stringPreferencesKey("osc_host")
         val OSC_SEND_PORT = intPreferencesKey("osc_send_port")
         val OSC_RECEIVE_PORT = intPreferencesKey("osc_receive_port")
@@ -118,6 +122,7 @@ class SettingsStore(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p ->
         AppSettings(
+            onboardingCompleted = p[Keys.ONBOARDING_COMPLETED] ?: false,
             oscHost = p[Keys.OSC_HOST] ?: "",
             oscSendPort = p[Keys.OSC_SEND_PORT] ?: VrcOsc.DEFAULT_SEND_PORT,
             oscReceivePort = p[Keys.OSC_RECEIVE_PORT] ?: VrcOsc.DEFAULT_RECEIVE_PORT,
@@ -150,6 +155,8 @@ class SettingsStore(private val context: Context) {
             lastEyeHeight = p[Keys.LAST_EYE_HEIGHT] ?: 1.7f,
         )
     }
+
+    suspend fun setOnboardingCompleted(value: Boolean) = put(Keys.ONBOARDING_COMPLETED, value)
 
     suspend fun setOscHost(value: String) = put(Keys.OSC_HOST, value.trim())
     suspend fun setOscSendPort(value: Int) = put(Keys.OSC_SEND_PORT, value)

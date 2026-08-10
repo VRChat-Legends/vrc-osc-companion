@@ -1,17 +1,30 @@
 package com.vrchatlegends.osccompanion.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Computer
+import androidx.compose.material.icons.filled.Headset
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +35,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -35,6 +51,10 @@ import com.vrchatlegends.osccompanion.ui.SectionCard
 import com.vrchatlegends.osccompanion.ui.StatusDot
 import com.vrchatlegends.osccompanion.ui.StatusTone
 import com.vrchatlegends.osccompanion.ui.theme.Bad
+import com.vrchatlegends.osccompanion.ui.theme.Good
+import com.vrchatlegends.osccompanion.ui.theme.SignalCoral
+import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
+import com.vrchatlegends.osccompanion.ui.theme.Warn
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -59,27 +79,21 @@ fun BridgeScreen(viewModel: AppViewModel) {
     val listenPortInvalid = listenPortDraft.toIntOrNull()?.let { !NetworkUtils.isValidPort(it) } ?: true
 
     ScreenScaffold(
-        title = "PC Bridge",
-        subtitle = "Gives a desktop app two way OSC with VRChat running on this headset.",
+        title = "PC Link",
+        subtitle = "Two-way OSC between VRChat on this Quest and tools on your PC",
     ) {
         SectionCard(
-            title = "How it works",
-            subtitle = "VRChat on Quest only ever sends OSC to 127.0.0.1, so a PC can never be the " +
-                "direct destination. This app runs on the headset, so it can be that local listener " +
-                "and relay everything over Wi-Fi.",
+            title = "Network path",
+            subtitle = "The companion relays VRChat's headset-only OSC over your Wi-Fi",
         ) {
-            Text(
-                "VRChat  ->  127.0.0.1:${connection.listenPort.takeIf { it > 0 } ?: 9001} (this app)  ->  " +
-                    "${settings.bridgePcHost.ifBlank { "your PC" }}:${settings.bridgePcPort}",
-                style = MaterialTheme.typography.bodyMedium,
+            BridgePath(
+                questIp = questIp,
+                pcHost = settings.bridgePcHost.ifBlank { "Your PC" },
+                pcPort = settings.bridgePcPort,
             )
             Text(
-                "your PC  ->  $questIp:${settings.bridgeListenPort} (this app)  ->  VRChat",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "The uplink is byte identical to a local VRChat, so desktop tools that already speak " +
-                    "OSC work unchanged. Point them at this headset instead of localhost.",
+                "Desktop tools listen on $pcPortDraft. To send back into VRChat, target " +
+                    "$questIp:$listenPortDraft.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -100,10 +114,15 @@ fun BridgeScreen(viewModel: AppViewModel) {
             LabelledValue("Bridge", if (stats.running) "Running" else "Stopped")
             LabelledValue("This Quest", "$questIp:${stats.listenPort.takeIf { it > 0 } ?: settings.bridgeListenPort}")
             LabelledValue("PC target", stats.pcTarget.ifBlank { "not set" })
-            LabelledValue("Sent to PC", "${stats.uplinkSent}")
-            LabelledValue("Filtered out", "${stats.uplinkDropped}")
-            LabelledValue("Received from PC", "${stats.downlinkReceived}")
-            LabelledValue("Rejected", "${stats.downlinkRejected}")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                BridgeMetric("TO PC", stats.uplinkSent, SignalCyan)
+                BridgeMetric("FROM PC", stats.downlinkReceived, Good)
+                BridgeMetric("FILTERED", stats.uplinkDropped, Warn)
+                BridgeMetric("REJECTED", stats.downlinkRejected, Bad)
+            }
             stats.lastDownlinkAddress?.let { LabelledValue("Last from PC", it) }
             stats.lastRejectedFrom?.let {
                 LabelledValue("Last rejected source", it, valueColor = Bad)
@@ -111,22 +130,23 @@ fun BridgeScreen(viewModel: AppViewModel) {
             stats.error?.let { Text(it, color = Bad, style = MaterialTheme.typography.bodyMedium) }
         }
 
-        SectionCard(title = "Desktop") {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Enable bridge", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Off by default. Needs a PC address before it will start.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        SectionCard(
+            title = "Connect your PC",
+            subtitle = if (settings.bridgePcHost.isBlank()) {
+                "Enter your PC's local network address first"
+            } else if (settings.bridgeEnabled) {
+                "Bridge enabled"
+            } else {
+                "Ready to enable"
+            },
+            trailing = {
                 Switch(
                     checked = settings.bridgeEnabled,
                     onCheckedChange = { v -> viewModel.updateSettings { setBridgeEnabled(v) } },
                     enabled = settings.bridgePcHost.isNotBlank(),
                 )
-            }
+            },
+        ) {
 
             OutlinedTextField(
                 value = hostDraft,
@@ -170,7 +190,10 @@ fun BridgeScreen(viewModel: AppViewModel) {
                         }
                     },
                     enabled = !hostInvalid && !pcPortInvalid && !listenPortInvalid,
-                ) { Text("Apply") }
+                ) {
+                    Icon(Icons.Filled.Save, contentDescription = null)
+                    Text("Save connection")
+                }
             }
 
             Text(
@@ -227,6 +250,7 @@ fun BridgeScreen(viewModel: AppViewModel) {
         SectionCard(
             title = "Security",
             subtitle = "The listen port accepts OSC that gets injected straight into your VRChat session.",
+            trailing = { Icon(Icons.Filled.Security, contentDescription = null, tint = SignalCoral) },
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -269,6 +293,78 @@ fun BridgeScreen(viewModel: AppViewModel) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun BridgePath(questIp: String, pcHost: String, pcPort: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BridgeNode(Icons.Filled.Headset, "VRChat", "Quest")
+        Icon(
+            Icons.Filled.ArrowForward,
+            contentDescription = null,
+            tint = SignalCyan,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        BridgeNode(Icons.Filled.Headset, "Companion", questIp)
+        Icon(
+            Icons.Filled.ArrowForward,
+            contentDescription = null,
+            tint = SignalCyan,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        BridgeNode(Icons.Filled.Computer, "PC tool", "$pcHost:$pcPort")
+    }
+}
+
+@Composable
+private fun BridgeNode(icon: ImageVector, title: String, detail: String) {
+    Surface(
+        modifier = Modifier.width(180.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            modifier = Modifier.padding(13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Surface(shape = RoundedCornerShape(7.dp), color = SignalCyan.copy(alpha = 0.12f)) {
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = SignalCyan, modifier = Modifier.size(20.dp))
+                }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BridgeMetric(label: String, value: Long, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(7.dp),
+        color = color.copy(alpha = 0.10f),
+    ) {
+        Column(
+            modifier = Modifier.width(130.dp).padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = color, fontWeight = FontWeight.Bold)
+            Text(value.toString(), style = MaterialTheme.typography.titleMedium)
         }
     }
 }

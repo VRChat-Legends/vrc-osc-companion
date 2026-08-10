@@ -1,17 +1,26 @@
 package com.vrchatlegends.osccompanion.ui.screens
 
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,11 +32,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Router
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vrchatlegends.osccompanion.BuildConfig
+import com.vrchatlegends.osccompanion.diag.CrashReporter
+import com.vrchatlegends.osccompanion.logs.VrcLogReader
 import com.vrchatlegends.osccompanion.net.NetworkUtils
 import com.vrchatlegends.osccompanion.osc.VrcOsc
 import com.vrchatlegends.osccompanion.ui.AppViewModel
@@ -35,6 +53,8 @@ import com.vrchatlegends.osccompanion.ui.LabelledValue
 import com.vrchatlegends.osccompanion.ui.ScreenScaffold
 import com.vrchatlegends.osccompanion.ui.SectionCard
 import com.vrchatlegends.osccompanion.ui.theme.Bad
+import com.vrchatlegends.osccompanion.ui.theme.Good
+import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
 import com.vrchatlegends.osccompanion.ui.theme.Warn
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -56,6 +76,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
     val hostInvalid = hostDraft.isNotBlank() && !NetworkUtils.isValidHost(hostDraft)
     val sendPortInvalid = sendPortDraft.toIntOrNull()?.let { !NetworkUtils.isValidPort(it) } ?: true
     val receivePortInvalid = receivePortDraft.toIntOrNull()?.let { !NetworkUtils.isValidPort(it) } ?: true
+    val targetChanged = hostDraft != settings.oscHost ||
+        sendPortDraft != settings.oscSendPort.toString() ||
+        receivePortDraft != settings.oscReceivePort.toString()
 
     ScreenScaffold(
         title = "Settings",
@@ -63,11 +86,58 @@ fun SettingsScreen(viewModel: AppViewModel) {
     ) {
         SectionCard(
             title = "OSC target",
-            subtitle = "Defaults to this headset's own address, which is where VRChat is listening " +
-                "when it runs on the same Quest.",
+            subtitle = "Where this app sends OSC messages",
         ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = if (connection.vrchatSeen) Good.copy(alpha = 0.10f)
+                else SignalCyan.copy(alpha = 0.08f),
+                border = BorderStroke(
+                    1.dp,
+                    if (connection.vrchatSeen) Good.copy(alpha = 0.32f)
+                    else SignalCyan.copy(alpha = 0.24f),
+                ),
+            ) {
+                Row(
+                    modifier = Modifier.padding(15.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        modifier = Modifier.size(42.dp),
+                        shape = CircleShape,
+                        color = if (connection.vrchatSeen) Good.copy(alpha = 0.14f)
+                        else SignalCyan.copy(alpha = 0.12f),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Filled.Router,
+                                contentDescription = null,
+                                tint = if (connection.vrchatSeen) Good else SignalCyan,
+                            )
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (connection.vrchatSeen) "VRChat discovered" else "Current OSC target",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (connection.vrchatSeen) Good else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "${connection.targetHost}:${connection.targetPort}",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    Text(
+                        if (settings.isAutoHost) "AUTO" else "MANUAL",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (settings.isAutoHost) SignalCyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
             LabelledValue("This Quest", questIp)
-            LabelledValue("Currently sending to", "${connection.targetHost}:${connection.targetPort}")
 
             OutlinedTextField(
                 value = hostDraft,
@@ -92,7 +162,11 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 allIps.forEach { ip -> AssistChip(onClick = { hostDraft = ip }, label = { Text(ip) }) }
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(
                     value = sendPortDraft,
                     onValueChange = { sendPortDraft = it.filter { c -> c.isDigit() } },
@@ -119,8 +193,11 @@ fun SettingsScreen(viewModel: AppViewModel) {
                             receivePortDraft.toIntOrNull()?.let { setOscReceivePort(it) }
                         }
                     },
-                    enabled = !hostInvalid && !sendPortInvalid && !receivePortInvalid,
-                ) { Text("Apply") }
+                    enabled = targetChanged && !hostInvalid && !sendPortInvalid && !receivePortInvalid,
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null)
+                    Text(if (targetChanged) "Apply target" else "Applied")
+                }
             }
 
             Text(
@@ -169,28 +246,29 @@ fun SettingsScreen(viewModel: AppViewModel) {
             )
         }
 
-        SectionCard(
-            title = "Meta Developer Mode",
-            subtitle = "Only some features need it.",
-        ) {
-            Text(
-                "Meta Horizon phone app > Menu > Devices > your headset > Headset settings > " +
-                    "Developer Mode. A free verified developer organisation on your Meta account is " +
-                    "required before the switch appears.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "Required for: now playing in the chatbox, reading VRChat's log files, and " +
-                    "sideloading builds that did not come from the store.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Warn,
-            )
-            Text(
-                "Not required for: chatbox text, avatar parameters, input control, avatar scale, " +
-                    "status lines, heart rate or the PC link.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        // Nothing to explain once the user already has Developer Mode on.
+        if (!remember { VrcLogReader.isDeveloperModeOn(context) }) {
+            SectionCard(
+                title = "Meta Developer Mode",
+                subtitle = "Most OSC tools do not need it",
+            ) {
+                Text(
+                    "Meta Horizon phone app > Menu > Devices > your headset > Headset settings > " +
+                        "Developer Mode. A free verified developer organisation on your Meta account is " +
+                        "required before the switch appears.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                DeveloperModeRequirement(
+                    required = true,
+                    title = "Developer Mode required",
+                    detail = "Now playing, VRChat log access, and sideloaded builds.",
+                )
+                DeveloperModeRequirement(
+                    required = false,
+                    title = "Works without Developer Mode",
+                    detail = "Chatbox, parameters, input, avatar scale, status, heart rate, and PC Link.",
+                )
+            }
         }
 
         SectionCard(title = "About") {
@@ -202,6 +280,41 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            OutlinedButton(onClick = { viewModel.setOnboardingCompleted(false) }) {
+                Icon(Icons.Filled.RestartAlt, contentDescription = null)
+                Text("Run setup again")
+            }
+        }
+
+        var lastCrash by remember { mutableStateOf(CrashReporter.lastCrash(context)) }
+        lastCrash?.let { trace ->
+            SectionCard(
+                title = "Last crash",
+                subtitle = "Captured on this headset, send this to support",
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(7.dp),
+                    color = Bad.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, Bad.copy(alpha = 0.30f)),
+                ) {
+                    Text(
+                        trace.lineSequence().take(14).joinToString("\n"),
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        CrashReporter.clear(context)
+                        lastCrash = null
+                    },
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null)
+                    Text("Clear")
+                }
+            }
         }
     }
 }
@@ -222,5 +335,30 @@ private fun ToggleSetting(title: String, description: String, checked: Boolean, 
             )
         }
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun DeveloperModeRequirement(required: Boolean, title: String, detail: String) {
+    val color = if (required) Warn else Good
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            if (required) Icons.Filled.WarningAmber else Icons.Filled.CheckCircle,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(22.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = color)
+            Text(
+                detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

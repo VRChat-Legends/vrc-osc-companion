@@ -24,9 +24,6 @@ object VrclAuth {
 
     val providers = listOf(
         AuthProvider("discord", "Discord"),
-        AuthProvider("google", "Google"),
-        AuthProvider("github", "GitHub"),
-        AuthProvider("twitch", "Twitch"),
     )
 
     data class AuthProvider(val id: String, val label: String)

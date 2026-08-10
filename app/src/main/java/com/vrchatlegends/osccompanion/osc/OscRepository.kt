@@ -441,7 +441,7 @@ class OscRepository private constructor(private val appContext: Context) {
     }
 
     companion object {
-        const val SERVICE_NAME = "VRC-OSC-Companion"
+        const val SERVICE_NAME = "VRChat Legends OSC Companion"
         const val LOG_CAPACITY = 500
         const val EVENT_CAPACITY = 100
 

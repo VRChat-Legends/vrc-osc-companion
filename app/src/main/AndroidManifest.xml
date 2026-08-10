@@ -56,8 +56,18 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:resizeableActivity="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
             android:theme="@style/Theme.VrcOscCompanion">
+
+            <!-- Horizon OS sizes a 2D panel from these hints. Without them the launcher
+                 hands out a portrait phone-shaped window. -->
+            <layout
+                android:defaultWidth="1600dp"
+                android:defaultHeight="900dp"
+                android:minWidth="720dp"
+                android:minHeight="480dp"
+                android:gravity="center" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

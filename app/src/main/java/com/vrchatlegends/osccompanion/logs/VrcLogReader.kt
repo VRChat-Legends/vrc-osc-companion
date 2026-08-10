@@ -92,6 +92,21 @@ object VrcLogReader {
     fun canReadOtherAppLogs(context: Context): Boolean =
         context.checkSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
 
+    /** Meta Developer Mode is what exposes adb, so these globals are the closest readable signal. */
+    fun isDeveloperModeOn(context: Context): Boolean = runCatching {
+        val resolver = context.contentResolver
+        android.provider.Settings.Global.getInt(
+            resolver,
+            android.provider.Settings.Global.ADB_ENABLED,
+            0,
+        ) == 1 ||
+            android.provider.Settings.Global.getInt(
+                resolver,
+                android.provider.Settings.Global.DEVELOPMENT_SETTINGS_ENABLED,
+                0,
+            ) == 1
+    }.getOrDefault(false)
+
     fun hasAllFilesAccess(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager() else true
 

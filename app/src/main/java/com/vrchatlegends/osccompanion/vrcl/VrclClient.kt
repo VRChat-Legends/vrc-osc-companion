@@ -6,6 +6,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -30,6 +33,36 @@ data class VrclEvent(
     val startsAt: String? = null,
     val location: String? = null,
 )
+
+/** One row of https://vrchatlegends.com/social */
+data class VrclPost(
+    val key: String,
+    val id: String,
+    val playerId: String,
+    val authorName: String,
+    val authorAvatarUrl: String?,
+    val authorVerified: Boolean,
+    val body: String,
+    val createdAt: String?,
+    val likeCount: Int,
+    val commentCount: Int,
+    val repostCount: Int,
+    val viewerLiked: Boolean,
+    val imageUrl: String?,
+    val repostedBy: String?,
+)
+
+/**
+ * Who the signed-in account is on the social side. Posting goes to a Legend profile, not
+ * the account, so [playerId] is what decides whether the composer can be shown at all.
+ */
+data class VrclSocialIdentity(
+    val playerId: String?,
+    val displayName: String,
+    val avatarUrl: String?,
+) {
+    val canPost: Boolean get() = !playerId.isNullOrBlank()
+}
 
 /**
  * Thin read-only client for the VRChat Legends API.
@@ -94,6 +127,75 @@ class VrclClient(private val tokenProvider: () -> String?) {
         }
     }
 
+    /** Public timeline. Works signed out, which is why the Community tab is never empty. */
+    suspend fun socialFeed(limit: Int = 25, offset: Int = 0, mode: String = "latest"): Result<List<VrclPost>> =
+        request("/api/social/feed?feed=$mode&limit=$limit&offset=$offset") { body ->
+            val root = json.parseToJsonElement(body).jsonObject
+            (root["posts"] as? JsonArray).orEmpty().mapNotNull { element ->
+                val obj = element as? JsonObject ?: return@mapNotNull null
+                val id = obj.str("id") ?: return@mapNotNull null
+                val playerId = obj.str("playerId") ?: return@mapNotNull null
+                VrclPost(
+                    key = obj.str("feedKey") ?: "$playerId-$id",
+                    id = id,
+                    playerId = playerId,
+                    authorName = obj.str("authorName") ?: "Legend",
+                    authorAvatarUrl = obj.str("authorAvatarUrl"),
+                    authorVerified = obj.bool("authorVerified"),
+                    body = obj.str("body").orEmpty(),
+                    createdAt = obj.str("createdAt"),
+                    likeCount = obj.int("likeCount") ?: 0,
+                    commentCount = obj.int("commentCount") ?: 0,
+                    repostCount = obj.int("repostCount") ?: 0,
+                    viewerLiked = obj.bool("viewerLiked"),
+                    imageUrl = obj.firstMediaUrl(),
+                    repostedBy = (obj["repostedBy"] as? JsonObject)?.str("name"),
+                )
+            }
+        }
+
+    /** Purpose-built endpoint for this app; the only place that reports the Legend profile id. */
+    suspend fun socialIdentity(): Result<VrclSocialIdentity> = request("/api/companion/session") { body ->
+        val account = json.parseToJsonElement(body).jsonObject["account"]?.jsonObject
+            ?: error("No account in session response")
+        VrclSocialIdentity(
+            playerId = account.str("playerId"),
+            displayName = account.str("displayName") ?: "Legend",
+            avatarUrl = account.str("avatar"),
+        )
+    }
+
+    suspend fun createPost(playerId: String, body: String): Result<Unit> {
+        val payload = buildJsonObject { put("body", JsonPrimitive(body)) }.toString()
+        return post("/api/players/${encode(playerId)}/feed", payload)
+    }
+
+    suspend fun likePost(playerId: String, postId: String): Result<Unit> =
+        post("/api/players/${encode(playerId)}/feed/${encode(postId)}/like", "{}")
+
+    private suspend fun post(path: String, payload: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder()
+                    .url(BuildConfig.VRCL_BASE_URL + path)
+                    .post(payload.toRequestBody("application/json".toMediaType()))
+                    .authorized()
+                    .build()
+                http.newCall(request).execute().use { response ->
+                    val body = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) error(readError(body, response.code))
+                }
+            }
+        }
+
+    /** The site returns friendly `{ "error": "..." }` copy for rate limits and setup problems. */
+    private fun readError(body: String, code: Int): String =
+        runCatching { json.parseToJsonElement(body).jsonObject.str("error") }.getOrNull()
+            ?: "Request failed (HTTP $code)"
+
+    private fun encode(value: String): String =
+        java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
     private suspend fun <T> request(path: String, parse: (String) -> T): Result<T> =
         withContext(Dispatchers.IO) {
             runCatching {
@@ -121,7 +223,13 @@ class VrclClient(private val tokenProvider: () -> String?) {
     private fun JsonObject.str(key: String): String? =
         (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
 
-    @Suppress("unused")
+    private fun JsonObject.bool(key: String): Boolean =
+        (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull ?: false
+
+    private fun JsonObject.firstMediaUrl(): String? =
+        (this["media"] as? JsonArray)
+            ?.firstNotNullOfOrNull { (it as? JsonObject)?.let { m -> m.str("url") ?: m.str("src") } }
+
     private fun JsonObject.int(key: String): Int? =
         (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.intOrNull
 }
