@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.vrchatlegends.osccompanion.ui.AppViewModel
+import com.vrchatlegends.osccompanion.ui.GroupInviteState
 import com.vrchatlegends.osccompanion.ui.ScreenHeader
 import com.vrchatlegends.osccompanion.ui.ScreenMaxWidth
 import com.vrchatlegends.osccompanion.ui.theme.Bad
@@ -121,6 +122,7 @@ private enum class VrchatTab(val label: String, val icon: ImageVector) {
 @Composable
 fun VrchatToolsScreen(viewModel: AppViewModel) {
     val state by viewModel.vrchatTools.state.collectAsStateWithLifecycle()
+    val groupInvite by viewModel.groupInvite.collectAsStateWithLifecycle()
     val repository = viewModel.vrchatTools
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -162,6 +164,9 @@ fun VrchatToolsScreen(viewModel: AppViewModel) {
                     query = query,
                     onQueryChange = { query = it },
                     sendChatbox = viewModel::sendChatbox,
+                    groupInvite = groupInvite,
+                    onRequestGroupInvite = viewModel::requestGroupInvite,
+                    onClearGroupInvite = viewModel::clearGroupInvite,
                 )
                 state.twoFactorMethods.isNotEmpty() ->
                     item(key = "two-factor") { TwoFactorPanel(state, repository) }
@@ -404,11 +409,18 @@ private fun LazyListScope.signedInItems(
     query: String,
     onQueryChange: (String) -> Unit,
     sendChatbox: (String) -> Unit,
+    groupInvite: GroupInviteState,
+    onRequestGroupInvite: () -> Unit,
+    onClearGroupInvite: () -> Unit,
 ) {
     val tabs = VrchatTab.entries
     val tab = tabs[selectedTab.coerceIn(tabs.indices)]
 
     item(key = "account") { AccountBar(state, repository) }
+
+    item(key = "group-invite") {
+        GroupInviteCard(groupInvite, onRequestGroupInvite, onClearGroupInvite)
+    }
 
     item(key = "banner") {
         AnimatedVisibility(
@@ -478,6 +490,71 @@ private fun ToolsSearchField(label: String, query: String, onQueryChange: (Strin
         placeholder = { Text("Search ${label.lowercase()}") },
         singleLine = true,
     )
+}
+
+/**
+ * Asks the site's VRChat account to send a group invite to whoever is signed in here. The
+ * cooldown and the audit trail live on the backend, so this only relays what it answers.
+ */
+@Composable
+private fun GroupInviteCard(
+    invite: GroupInviteState,
+    onRequest: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = SignalCyan.copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, SignalCyan.copy(alpha = 0.26f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ToolIcon(Icons.Filled.Groups, SignalCyan)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("VRChat Legends group", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Send yourself an invite. It lands in your VRChat notifications.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Button(onClick = onRequest, enabled = !invite.busy) {
+                    if (invite.busy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    } else {
+                        Text("Invite me")
+                    }
+                }
+            }
+
+            val note = invite.error ?: invite.message
+            if (note != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (invite.error != null) Bad else Good,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onClear) { Text("OK") }
+                }
+            }
+        }
+    }
 }
 
 @Composable

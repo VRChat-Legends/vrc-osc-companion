@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -54,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,6 +75,8 @@ import com.vrchatlegends.osccompanion.ui.theme.Good
 import com.vrchatlegends.osccompanion.ui.theme.SignalCoral
 import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
 import com.vrchatlegends.osccompanion.ui.theme.Warn
+import com.vrchatlegends.osccompanion.logs.VrcLogReader
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -83,6 +87,7 @@ fun HomeScreen(viewModel: AppViewModel, navController: NavController) {
     val avatarId by viewModel.osc.avatarId.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val bridge by viewModel.bridge.collectAsStateWithLifecycle()
+    val instance by viewModel.instance.collectAsStateWithLifecycle()
 
     ScreenScaffold(
         title = profile?.let { "Welcome, ${it.displayName}" } ?: "Home",
@@ -118,6 +123,14 @@ fun HomeScreen(viewModel: AppViewModel, navController: NavController) {
             pcSeen = bridge.pcSeen,
             parameterCount = parameters.size,
         )
+
+        AnimatedVisibility(
+            visible = !instance.isEmpty,
+            enter = fadeIn() + slideInVertically { it / 4 },
+            exit = fadeOut() + slideOutVertically { -it / 4 },
+        ) {
+            InstancePanel(instance)
+        }
 
         Text("Quick tools", style = MaterialTheme.typography.titleLarge)
         FlowRow(
@@ -361,6 +374,84 @@ private fun SetupPrompt(running: Boolean, onConnect: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Who is in the instance, read off VRChat's own log. The roster includes you, because VRChat
+ * announces the local user with the same join line as everyone else.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun InstancePanel(instance: VrcLogReader.InstanceState) {
+    val elapsed by produceState(0L, instance.enteredAtMs) {
+        while (true) {
+            value = if (instance.enteredAtMs > 0L) System.currentTimeMillis() - instance.enteredAtMs else 0L
+            delay(1_000)
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = SignalCyan.copy(alpha = 0.07f),
+        border = BorderStroke(1.dp, SignalCyan.copy(alpha = 0.24f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Groups, contentDescription = null, tint = SignalCyan)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        instance.worldName ?: "In an instance",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        buildString {
+                            append(instance.players.size)
+                            append(if (instance.players.size == 1) " player" else " players")
+                            if (elapsed > 0L) append(" | here ${formatElapsed(elapsed)}")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            if (instance.players.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    instance.players.forEach { name ->
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Whole minutes is the right resolution here; a ticking seconds counter is just noise. */
+private fun formatElapsed(ms: Long): String {
+    val minutes = (ms / 60_000).coerceAtLeast(0)
+    val hours = minutes / 60
+    return if (hours > 0) "${hours}h ${minutes % 60}m" else "${minutes}m"
 }
 
 @Composable

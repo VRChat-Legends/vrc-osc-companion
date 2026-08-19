@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -113,7 +114,7 @@ class OscQueryDiscovery(
             }
             runCatching { manager.resolveService(info, listener) }
                 .onFailure { return@withContext null }
-            result.receive()
+            withTimeoutOrNull(RESOLVE_TIMEOUT_MS) { result.receive() }
         }
 
     private suspend fun fetchHostInfo(name: String, host: String, port: Int): OscQueryPeer {
@@ -141,5 +142,9 @@ class OscQueryDiscovery(
                 if (!response.isSuccessful) null else response.body?.string()
             }
         }.getOrNull()
+    }
+
+    private companion object {
+        const val RESOLVE_TIMEOUT_MS = 4_000L
     }
 }

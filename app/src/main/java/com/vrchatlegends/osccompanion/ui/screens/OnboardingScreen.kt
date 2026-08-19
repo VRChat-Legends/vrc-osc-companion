@@ -1,26 +1,20 @@
 package com.vrchatlegends.osccompanion.ui.screens
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -39,7 +33,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Computer
-import androidx.compose.material.icons.filled.Headset
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Security
@@ -52,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -60,29 +55,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.vrchatlegends.osccompanion.data.AppTheme
 import com.vrchatlegends.osccompanion.ui.AppViewModel
+import com.vrchatlegends.osccompanion.ui.ThemeModeSelector
+import com.vrchatlegends.osccompanion.ui.theme.AccentChoices
 import com.vrchatlegends.osccompanion.ui.theme.Good
-import com.vrchatlegends.osccompanion.ui.theme.SignalCoral
 import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
 import com.vrchatlegends.osccompanion.ui.theme.Warn
 
-private const val ONBOARDING_STEPS = 3
+private const val ONBOARDING_STEPS = 4
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OnboardingScreen(
     viewModel: AppViewModel,
     onFinished: () -> Unit,
 ) {
     val connection by viewModel.osc.connection.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
     var page by remember { mutableIntStateOf(0) }
 
     BoxWithConstraints(
@@ -90,10 +89,11 @@ fun OnboardingScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        val wide = maxWidth >= 760.dp
+        val wide = maxWidth >= 900.dp
         if (wide) {
             Row(Modifier.fillMaxSize()) {
                 OnboardingVisual(
+                    page = page,
                     connected = connection.vrchatSeen,
                     modifier = Modifier
                         .width(360.dp)
@@ -103,7 +103,11 @@ fun OnboardingScreen(
                     page = page,
                     connected = connection.vrchatSeen,
                     running = connection.running,
+                    appTheme = settings.appTheme,
+                    accentArgb = settings.accentColor,
                     onConnect = viewModel::connect,
+                    onThemeSelect = viewModel::setAppTheme,
+                    onAccentSelect = viewModel::setAccentColor,
                     onBack = { page = (page - 1).coerceAtLeast(0) },
                     onNext = {
                         if (page == ONBOARDING_STEPS - 1) onFinished()
@@ -116,17 +120,22 @@ fun OnboardingScreen(
         } else {
             Column(Modifier.fillMaxSize()) {
                 OnboardingVisual(
+                    page = page,
                     connected = connection.vrchatSeen,
                     compact = true,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp),
+                        .height(170.dp),
                 )
                 OnboardingBody(
                     page = page,
                     connected = connection.vrchatSeen,
                     running = connection.running,
+                    appTheme = settings.appTheme,
+                    accentArgb = settings.accentColor,
                     onConnect = viewModel::connect,
+                    onThemeSelect = viewModel::setAppTheme,
+                    onAccentSelect = viewModel::setAccentColor,
                     onBack = { page = (page - 1).coerceAtLeast(0) },
                     onNext = {
                         if (page == ONBOARDING_STEPS - 1) onFinished()
@@ -142,84 +151,29 @@ fun OnboardingScreen(
 
 @Composable
 private fun OnboardingVisual(
+    page: Int,
     connected: Boolean,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
-    val infinite = rememberInfiniteTransition(label = "onboarding signal")
-    val progress by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing)),
-        label = "signal progress",
-    )
-    val pulse by infinite.animateFloat(
-        initialValue = 0.86f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing)),
-        label = "signal pulse",
-    )
-    val activeColor = if (connected) Good else SignalCyan
-
-    Box(
-        modifier = modifier.background(MaterialTheme.colorScheme.surface),
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        border = androidx.compose.foundation.BorderStroke(
+            0.dp,
+            MaterialTheme.colorScheme.outlineVariant,
+        ),
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val spacing = 28.dp.toPx()
-            var x = 0f
-            while (x < size.width) {
-                drawLine(
-                    color = Color.White.copy(alpha = 0.025f),
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1.dp.toPx(),
-                )
-                x += spacing
-            }
-            var y = 0f
-            while (y < size.height) {
-                drawLine(
-                    color = Color.White.copy(alpha = 0.025f),
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = 1.dp.toPx(),
-                )
-                y += spacing
-            }
-
-            val centerY = if (compact) size.height * 0.58f else size.height * 0.5f
-            val start = Offset(size.width * 0.22f, centerY)
-            val end = Offset(size.width * 0.78f, centerY)
-            drawLine(
-                color = activeColor.copy(alpha = 0.22f),
-                start = start,
-                end = end,
-                strokeWidth = 3.dp.toPx(),
-                cap = StrokeCap.Round,
-            )
-            val signalX = start.x + (end.x - start.x) * progress
-            drawCircle(
-                color = activeColor.copy(alpha = 0.18f),
-                radius = 16.dp.toPx() * pulse,
-                center = Offset(signalX, centerY),
-            )
-            drawCircle(
-                color = activeColor,
-                radius = 5.dp.toPx(),
-                center = Offset(signalX, centerY),
-            )
-        }
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(if (compact) 24.dp else 32.dp),
+                .padding(if (compact) 20.dp else 28.dp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     "VRCHAT LEGENDS",
-                    color = SignalCoral,
+                    color = MaterialTheme.colorScheme.primary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -230,22 +184,30 @@ private fun OnboardingVisual(
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SignalNode(Icons.Filled.Headset, "Quest")
-                SignalNode(
-                    icon = if (connected) Icons.Filled.Check else Icons.Filled.SettingsInputAntenna,
-                    label = if (connected) "Linked" else "Listening",
-                    active = connected,
-                    modifier = Modifier.scale(pulse.coerceAtMost(1f)),
-                )
-                SignalNode(Icons.Filled.Computer, "VRChat")
-            }
-
-            if (!compact) {
+            if (compact) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CompactSetupStage(Icons.Filled.AutoAwesome, "Welcome", page, 0, Modifier.weight(1f))
+                    CompactSetupStage(Icons.Filled.SettingsInputAntenna, "Connect", page, 1, Modifier.weight(1f))
+                    CompactSetupStage(Icons.Filled.Palette, "Style", page, 2, Modifier.weight(1f))
+                    CompactSetupStage(Icons.Filled.Check, "Ready", page, 3, Modifier.weight(1f))
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SetupStageRow(Icons.Filled.AutoAwesome, "Welcome", "What the companion controls", page, 0)
+                    SetupStageRow(
+                        Icons.Filled.SettingsInputAntenna,
+                        "Connect VRChat",
+                        if (connected) "VRChat detected" else "Enable OSC and start listening",
+                        page,
+                        1,
+                        forceComplete = connected,
+                    )
+                    SetupStageRow(Icons.Filled.Palette, "Personalize", "Theme and accent", page, 2)
+                    SetupStageRow(Icons.Filled.Check, "Ready", "Open your workspace", page, 3)
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -257,7 +219,12 @@ private fun OnboardingVisual(
                             .background(if (connected) Good else Warn),
                     )
                     Text(
-                        if (connected) "VRChat detected" else "Waiting for your first connection",
+                        when (page) {
+                            0 -> "Built for your Quest workspace"
+                            1 -> if (connected) "VRChat detected" else "Waiting for your first connection"
+                            2 -> "Theme changes apply instantly"
+                            else -> if (connected) "Connection verified" else "Setup ready"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -268,36 +235,97 @@ private fun OnboardingVisual(
 }
 
 @Composable
-private fun SignalNode(
+private fun CompactSetupStage(
     icon: ImageVector,
     label: String,
+    current: Int,
+    index: Int,
     modifier: Modifier = Modifier,
-    active: Boolean = false,
 ) {
+    val active = index == current
+    val complete = index < current
+    val accent = if (complete) Good else MaterialTheme.colorScheme.primary
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Surface(
-            modifier = Modifier.size(54.dp),
+            modifier = Modifier.size(38.dp),
             shape = CircleShape,
-            color = if (active) Good.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
+            color = if (active || complete) accent.copy(alpha = 0.16f) else Color.Transparent,
             border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (active) Good.copy(alpha = 0.65f) else MaterialTheme.colorScheme.outline,
+                if (active) 2.dp else 1.dp,
+                if (active || complete) accent.copy(alpha = 0.72f) else MaterialTheme.colorScheme.outline,
             ),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = if (active) Good else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(26.dp),
+                    if (complete) Icons.Filled.Check else icon,
+                    contentDescription = if (active) "Current step" else if (complete) "Complete" else null,
+                    tint = if (active || complete) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp),
                 )
             }
         }
-        Text(label, style = MaterialTheme.typography.labelSmall)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun SetupStageRow(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    current: Int,
+    index: Int,
+    forceComplete: Boolean = false,
+) {
+    val active = index == current
+    val complete = index < current || forceComplete
+    val accent = if (complete) Good else MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            modifier = Modifier.size(42.dp),
+            shape = CircleShape,
+            color = if (active || complete) accent.copy(alpha = 0.14f) else Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(
+                if (active) 2.dp else 1.dp,
+                if (active || complete) accent.copy(alpha = 0.68f) else MaterialTheme.colorScheme.outline,
+            ),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    if (complete) Icons.Filled.Check else icon,
+                    contentDescription = if (active) "Current step" else if (complete) "Complete" else null,
+                    tint = if (active || complete) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(21.dp),
+                )
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            )
+            Text(
+                if (complete && !active) "Complete" else detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (complete) Good else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -306,7 +334,11 @@ private fun OnboardingBody(
     page: Int,
     connected: Boolean,
     running: Boolean,
+    appTheme: AppTheme,
+    accentArgb: Long,
     onConnect: () -> Unit,
+    onThemeSelect: (AppTheme) -> Unit,
+    onAccentSelect: (Long) -> Unit,
     onBack: () -> Unit,
     onNext: () -> Unit,
     onSkip: () -> Unit,
@@ -324,38 +356,33 @@ private fun OnboardingBody(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             StepIndicator(page)
-            Text(
-                "Skip setup",
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClick = onSkip)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            TextButton(onClick = onSkip, modifier = Modifier.height(48.dp)) {
+                Text("Skip setup")
+            }
         }
 
-        AnimatedContent(
-            targetState = page,
+        Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
-            transitionSpec = {
-                (fadeIn(tween(280)) + slideInHorizontally(tween(320)) { it / 8 }) togetherWith
-                    (fadeOut(tween(180)) + slideOutHorizontally(tween(240)) { -it / 10 })
-            },
-            label = "onboarding page",
-        ) { target ->
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
-                when (target) {
-                    0 -> WelcomeStep()
-                    1 -> ConnectStep(
-                        connected = connected,
-                        running = running,
-                        onConnect = onConnect,
-                    )
-                    else -> ReadyStep(connected = connected, running = running)
-                }
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            when (page) {
+                0 -> WelcomeStep()
+                1 -> ConnectStep(
+                    connected = connected,
+                    running = running,
+                    onConnect = onConnect,
+                )
+                2 -> AppearanceStep(
+                    appTheme = appTheme,
+                    accentArgb = accentArgb,
+                    onThemeSelect = onThemeSelect,
+                    onAccentSelect = onAccentSelect,
+                )
+                else -> ReadyStep(connected = connected, running = running)
             }
         }
 
@@ -376,7 +403,7 @@ private fun OnboardingBody(
 
             Button(
                 onClick = onNext,
-                colors = ButtonDefaults.buttonColors(containerColor = SignalCoral),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             ) {
                 Text(if (page == ONBOARDING_STEPS - 1) "Open companion" else "Continue")
                 Spacer(Modifier.width(8.dp))
@@ -391,20 +418,20 @@ private fun OnboardingBody(
 
 @Composable
 private fun StepIndicator(current: Int) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.semantics {
+            contentDescription = "Step ${current + 1} of $ONBOARDING_STEPS"
+        },
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         repeat(ONBOARDING_STEPS) { index ->
-            val width by animateFloatAsState(
-                targetValue = if (index == current) 32f else 9f,
-                animationSpec = tween(250),
-                label = "step width",
-            )
             Box(
                 Modifier
                     .height(9.dp)
-                    .width(width.dp)
+                    .width(if (index == current) 32.dp else 9.dp)
                     .clip(CircleShape)
                     .background(
-                        if (index <= current) SignalCoral
+                        if (index <= current) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.outline,
                     ),
             )
@@ -462,6 +489,66 @@ private fun ConnectStep(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppearanceStep(
+    appTheme: AppTheme,
+    accentArgb: Long,
+    onThemeSelect: (AppTheme) -> Unit,
+    onAccentSelect: (Long) -> Unit,
+) {
+    StepColumn(
+        eyebrow = "PERSONALIZE",
+        title = "Make it feel like yours",
+        body = "Choose how the companion looks. You can change this again from Settings.",
+    ) {
+        ThemeModeSelector(selected = appTheme, onSelect = onThemeSelect)
+        Text("Accent", style = MaterialTheme.typography.titleMedium)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            maxItemsInEachRow = 4,
+        ) {
+            AccentChoices.forEachIndexed { index, (name, color) ->
+                val stored = if (index == 0) 0L else color.toArgb().toLong()
+                val selected = stored == accentArgb
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .clickable { onAccentSelect(stored) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                ) {
+                    Surface(
+                        modifier = Modifier.size(38.dp),
+                        shape = CircleShape,
+                        color = color,
+                        border = androidx.compose.foundation.BorderStroke(
+                            if (selected) 3.dp else 1.dp,
+                            if (selected) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                    ) {
+                        if (selected) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "Selected",
+                                    tint = Color.Black.copy(alpha = 0.72f),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                    Text(name, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ReadyStep(connected: Boolean, running: Boolean) {
     StepColumn(
@@ -494,7 +581,7 @@ private fun StepColumn(
     ) {
         Text(
             eyebrow,
-            color = SignalCoral,
+            color = MaterialTheme.colorScheme.primary,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
         )

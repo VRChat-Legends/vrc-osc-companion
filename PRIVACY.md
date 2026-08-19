@@ -12,12 +12,18 @@ touches. It is short because the app does very little.
 
 * Your OSC settings: target host, ports, discovery and background options.
 * Your chatbox presets and rotating status lines.
+* Community scripts you explicitly install. These are declarative presets, not executable code.
 * Your last avatar eye-height value.
 * Your VRChat Legends session token, if you choose to sign in.
 * Your Pulsoid access token, if you choose to enter one.
 
 All of this lives in the app's private storage on the device. It is excluded from Android
 cloud backup and device transfer. Uninstalling the app deletes it.
+
+Installed scripts can contain only chatbox text, waits, and values for writable parameters
+reported by the current avatar through OSCQuery. The app revalidates a script before every
+run. Scripts cannot access files, launch apps, run code or shell commands, choose raw OSC
+paths, schedule themselves, or make network requests.
 
 ### Sent over your local network
 

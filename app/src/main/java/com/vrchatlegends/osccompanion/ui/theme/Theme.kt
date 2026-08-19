@@ -7,12 +7,18 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-val SignalCoral = Color(0xFFFF785A)
+val BrandPurple = Color(0xFF8B5CF6)
+val BrandPink = Color(0xFFEC4899)
+
+// Legacy name from the coral era; every old call site now renders the brand purple.
+val SignalCoral = BrandPurple
 val SignalCyan = Color(0xFF4CC9F0)
 val SignalYellow = Color(0xFFF4C95D)
 val BrandCyan = SignalCyan
@@ -25,10 +31,10 @@ val Warn = SignalYellow
 val Bad = Color(0xFFFF6B70)
 
 private val DarkColors = darkColorScheme(
-    primary = SignalCoral,
-    onPrimary = Color(0xFF2D0C05),
-    primaryContainer = Color(0xFF4B211A),
-    onPrimaryContainer = Color(0xFFFFDAD2),
+    primary = BrandPurple,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF3A2A66),
+    onPrimaryContainer = Color(0xFFE9DDFF),
     secondary = SignalCyan,
     onSecondary = Color(0xFF002A35),
     secondaryContainer = Color(0xFF0B3B49),
@@ -47,9 +53,9 @@ private val DarkColors = darkColorScheme(
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFFC43F2B),
+    primary = Color(0xFF6B46C1),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFDAD2),
+    primaryContainer = Color(0xFFE9DDFF),
     secondary = Color(0xFF007A8C),
     secondaryContainer = Color(0xFFB5EBF4),
     tertiary = Color(0xFF806000),
@@ -79,13 +85,38 @@ private val QuestTypography = Typography(
     labelSmall = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 14.sp, letterSpacing = 0.sp),
 )
 
+/** The accents offered in Settings. The first entry is the built in look. */
+val AccentChoices: List<Pair<String, Color>> = listOf(
+    "Legends Purple" to BrandPurple,
+    "Pink" to BrandPink,
+    "Cyan" to SignalCyan,
+    "Amber" to SignalYellow,
+    "Mint" to Good,
+    "Rose" to Color(0xFFFF7BAC),
+    "Lime" to Color(0xFFB8E986),
+    "Ice" to Color(0xFF9AD5FF),
+)
+
 @Composable
 fun VrcOscTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    accent: Color? = null,
     content: @Composable () -> Unit,
 ) {
+    val base = if (darkTheme) DarkColors else LightColors
+    // Only the primary family is overridden. Recolouring surfaces from an arbitrary hue is how
+    // themes end up unreadable, and the panel already sits two metres from the user's eyes.
+    val scheme = accent?.let {
+        base.copy(
+            primary = it,
+            onPrimary = if (it.luminance() > 0.5f) Color(0xFF10161C) else Color.White,
+            primaryContainer = it.copy(alpha = 0.30f).compositeOver(base.surface),
+            onPrimaryContainer = base.onSurface,
+        )
+    } ?: base
+
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = scheme,
         typography = QuestTypography,
         content = content,
     )

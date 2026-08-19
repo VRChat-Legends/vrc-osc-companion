@@ -80,6 +80,21 @@ object VrcLogReader {
         enum class Kind { WORLD, PLAYER_JOIN, PLAYER_LEAVE, OSC, ERROR }
     }
 
+    /**
+     * Who is in the instance right now, folded out of the join and leave lines.
+     *
+     * VRChat announces the local user the same way as everyone else, so the roster includes
+     * you. [enteredAtMs] is wall clock time from when the room line was first seen, which is
+     * the closest thing to "how long you have been here" that the log gives us.
+     */
+    data class InstanceState(
+        val worldName: String? = null,
+        val enteredAtMs: Long = 0L,
+        val players: List<String> = emptyList(),
+    ) {
+        val isEmpty: Boolean get() = worldName == null && players.isEmpty()
+    }
+
     // ── Discovery ───────────────────────────────────────────────────────────────
 
     /** The live logcat stream, which is where VRChat actually logs on Quest. */
@@ -137,13 +152,32 @@ object VrcLogReader {
             .sortedByDescending { it.lastModifiedMs }
     }
 
+    /**
+     * Opens the system folder picker. [EXTRA_INITIAL_URI] starts it inside VRChat's own data
+     * folder so the user does not have to walk the tree, and it degrades to the default
+     * location on the builds that ignore the hint.
+     */
     fun openTreeIntent(): Intent =
         Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
             addFlags(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
             )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, vrchatFolderUri())
+            }
         }
+
+    /**
+     * A tree uri pointing at VRChat's files directory on primary storage. Android 11 and up
+     * refuses to hand out a grant for `Android/data` itself, so this is only a starting
+     * point for the picker, never something to persist blindly.
+     */
+    fun vrchatFolderUri(pkg: String = CANDIDATE_PACKAGES.first()): Uri =
+        DocumentsContract.buildDocumentUri(
+            EXTERNAL_STORAGE_AUTHORITY,
+            "primary:Android/data/$pkg/files",
+        )
 
     fun persistTreePermission(context: Context, treeUri: Uri) {
         runCatching {
@@ -341,6 +375,66 @@ object VrcLogReader {
             else -> null
         }
     }
+
+    /**
+     * Folds a batch of log lines into the running instance state.
+     *
+     * [replaceRoster] is for logcat, where every read is a fresh snapshot of the tail rather
+     * than only the new bytes. Rebuilding the roster from that snapshot is what stops people
+     * who left while their join line scrolled out of the buffer from being stuck in the list.
+     */
+    fun trackInstance(
+        previous: InstanceState,
+        lines: List<LogLine>,
+        replaceRoster: Boolean,
+        nowMs: Long = System.currentTimeMillis(),
+    ): InstanceState {
+        var world = previous.worldName
+        var enteredAt = previous.enteredAtMs
+        val players = if (replaceRoster) mutableListOf() else previous.players.toMutableList()
+
+        for (line in lines) {
+            val text = line.message
+            when {
+                text.contains(ROOM_MARKER) -> {
+                    val name = text.substringAfter(ROOM_MARKER).trim()
+                    // Re-reading the same tail must not restart the timer, so only a genuinely
+                    // different world counts as a move.
+                    if (name.isNotBlank() && name != world) {
+                        world = name
+                        enteredAt = nowMs
+                        players.clear()
+                    }
+                }
+
+                text.contains(JOIN_MARKER) ->
+                    playerName(text.substringAfter(JOIN_MARKER))?.let { name ->
+                        if (players.none { it.equals(name, ignoreCase = true) }) players += name
+                    }
+
+                text.contains(LEAVE_MARKER) ->
+                    playerName(text.substringAfter(LEAVE_MARKER))?.let { name ->
+                        players.removeAll { it.equals(name, ignoreCase = true) }
+                    }
+            }
+        }
+
+        if (world != null && enteredAt == 0L) enteredAt = nowMs
+        return InstanceState(world, enteredAt, players.sortedBy { it.lowercase() })
+    }
+
+    /** `DisplayName (usr_1234...)` becomes `DisplayName`. Older builds omit the id entirely. */
+    private fun playerName(raw: String): String? {
+        val trimmed = USER_ID_SUFFIX.replace(raw.trim(), "").trim().trimEnd('.')
+        return trimmed.takeIf { it.isNotBlank() && it.length <= 64 }
+    }
+
+    private const val ROOM_MARKER = "Joining or Creating Room:"
+    private const val JOIN_MARKER = "OnPlayerJoined"
+    private const val LEAVE_MARKER = "OnPlayerLeft"
+    private const val EXTERNAL_STORAGE_AUTHORITY = "com.android.externalstorage.documents"
+
+    private val USER_ID_SUFFIX = Regex("""\s*\(usr_[0-9a-fA-F-]+\)\s*$""")
 
     private val HEADER = Regex("""^(\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)\s+-\s+""")
 

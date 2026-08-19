@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.vrchatlegends.osccompanion.bridge.PcBridge
@@ -16,6 +17,20 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+
+const val MIN_BACKGROUND_DIM = 0.62f
+const val MAX_BACKGROUND_DIM = 0.95f
+
+enum class AppTheme(val storedValue: String) {
+    SYSTEM("system"),
+    LIGHT("light"),
+    DARK("dark");
+
+    companion object {
+        fun fromStored(value: String?): AppTheme =
+            entries.firstOrNull { it.storedValue == value } ?: SYSTEM
+    }
+}
 
 data class AppSettings(
     val onboardingCompleted: Boolean = false,
@@ -40,6 +55,20 @@ data class AppSettings(
     /** Persisted storage access framework grant for VRChat's log folder. */
     val logFolderUri: String = "",
     val logAutoRefresh: Boolean = true,
+
+    /** User-granted VRChat Captures folder. Existing files are excluded by the checkpoint. */
+    val captureFolderUri: String = "",
+    val captureAutoSend: Boolean = false,
+    val captureCheckpointModifiedAtMs: Long = 0L,
+    val captureCheckpointFingerprint: String = "",
+
+    /** ARGB accent override. 0 keeps the built in coral. */
+    val accentColor: Long = 0L,
+    val appTheme: AppTheme = AppTheme.SYSTEM,
+    /** A picked image or video that loops behind the whole app. Empty means none. */
+    val backgroundUri: String = "",
+    /** How much theme background to place over the wallpaper so text stays readable. */
+    val backgroundDim: Float = MIN_BACKGROUND_DIM,
 
     val chatboxSilent: Boolean = true,
     val chatboxShowTyping: Boolean = true,
@@ -98,6 +127,14 @@ class SettingsStore(private val context: Context) {
         val BRIDGE_RESTRICT = booleanPreferencesKey("bridge_restrict")
 
         val LOG_FOLDER_URI = stringPreferencesKey("log_folder_uri")
+        val CAPTURE_FOLDER_URI = stringPreferencesKey("capture_folder_uri")
+        val CAPTURE_AUTO_SEND = booleanPreferencesKey("capture_auto_send")
+        val CAPTURE_CHECKPOINT_MS = longPreferencesKey("capture_checkpoint_ms")
+        val CAPTURE_CHECKPOINT_FINGERPRINT = stringPreferencesKey("capture_checkpoint_fingerprint")
+        val ACCENT_COLOR = longPreferencesKey("accent_color")
+        val APP_THEME = stringPreferencesKey("app_theme")
+        val BACKGROUND_URI = stringPreferencesKey("background_uri")
+        val BACKGROUND_DIM = floatPreferencesKey("background_dim")
         val LOG_AUTO_REFRESH = booleanPreferencesKey("log_auto_refresh")
 
         val CHATBOX_SILENT = booleanPreferencesKey("chatbox_silent")
@@ -137,6 +174,15 @@ class SettingsStore(private val context: Context) {
             bridgeRateLimitHz = p[Keys.BRIDGE_RATE_HZ] ?: 0,
             bridgeRestrictToPcHost = p[Keys.BRIDGE_RESTRICT] ?: true,
             logFolderUri = p[Keys.LOG_FOLDER_URI] ?: "",
+            captureFolderUri = p[Keys.CAPTURE_FOLDER_URI] ?: "",
+            captureAutoSend = p[Keys.CAPTURE_AUTO_SEND] ?: false,
+            captureCheckpointModifiedAtMs = p[Keys.CAPTURE_CHECKPOINT_MS] ?: 0L,
+            captureCheckpointFingerprint = p[Keys.CAPTURE_CHECKPOINT_FINGERPRINT] ?: "",
+            accentColor = p[Keys.ACCENT_COLOR] ?: 0L,
+            appTheme = AppTheme.fromStored(p[Keys.APP_THEME]),
+            backgroundUri = p[Keys.BACKGROUND_URI] ?: "",
+            backgroundDim = (p[Keys.BACKGROUND_DIM] ?: MIN_BACKGROUND_DIM)
+                .coerceIn(MIN_BACKGROUND_DIM, MAX_BACKGROUND_DIM),
             logAutoRefresh = p[Keys.LOG_AUTO_REFRESH] ?: true,
             chatboxSilent = p[Keys.CHATBOX_SILENT] ?: true,
             chatboxShowTyping = p[Keys.CHATBOX_TYPING] ?: true,
@@ -174,6 +220,45 @@ class SettingsStore(private val context: Context) {
     suspend fun setBridgeRestrictToPcHost(value: Boolean) = put(Keys.BRIDGE_RESTRICT, value)
 
     suspend fun setLogFolderUri(value: String) = put(Keys.LOG_FOLDER_URI, value)
+
+    suspend fun setCaptureFolder(
+        uri: String,
+        checkpointModifiedAtMs: Long,
+        checkpointFingerprint: String = "",
+    ) {
+        context.dataStore.edit {
+            it[Keys.CAPTURE_FOLDER_URI] = uri
+            it[Keys.CAPTURE_AUTO_SEND] = false
+            it[Keys.CAPTURE_CHECKPOINT_MS] = checkpointModifiedAtMs.coerceAtLeast(0L)
+            it[Keys.CAPTURE_CHECKPOINT_FINGERPRINT] = checkpointFingerprint
+        }
+    }
+
+    suspend fun enableCaptureAutoSend(checkpointModifiedAtMs: Long) {
+        context.dataStore.edit {
+            it[Keys.CAPTURE_CHECKPOINT_MS] = checkpointModifiedAtMs.coerceAtLeast(0L)
+            it[Keys.CAPTURE_CHECKPOINT_FINGERPRINT] = ""
+            it[Keys.CAPTURE_AUTO_SEND] = true
+        }
+    }
+
+    suspend fun setCaptureAutoSend(value: Boolean) = put(Keys.CAPTURE_AUTO_SEND, value)
+
+    suspend fun markCaptureProcessed(modifiedAtMs: Long, fingerprint: String) {
+        context.dataStore.edit {
+            it[Keys.CAPTURE_CHECKPOINT_MS] = modifiedAtMs.coerceAtLeast(0L)
+            it[Keys.CAPTURE_CHECKPOINT_FINGERPRINT] = fingerprint
+        }
+    }
+
+    suspend fun setAccentColor(value: Long) = put(Keys.ACCENT_COLOR, value)
+
+    suspend fun setAppTheme(value: AppTheme) = put(Keys.APP_THEME, value.storedValue)
+
+    suspend fun setBackgroundUri(value: String) = put(Keys.BACKGROUND_URI, value)
+
+    suspend fun setBackgroundDim(value: Float) =
+        put(Keys.BACKGROUND_DIM, value.coerceIn(MIN_BACKGROUND_DIM, MAX_BACKGROUND_DIM))
     suspend fun setLogAutoRefresh(value: Boolean) = put(Keys.LOG_AUTO_REFRESH, value)
 
     suspend fun setChatboxSilent(value: Boolean) = put(Keys.CHATBOX_SILENT, value)
@@ -192,6 +277,11 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setVrclSession(token: String, displayName: String) {
         context.dataStore.edit {
+            if (it[Keys.VRCL_TOKEN].orEmpty() != token) {
+                it[Keys.CAPTURE_AUTO_SEND] = false
+                it[Keys.CAPTURE_CHECKPOINT_MS] = 0L
+                it[Keys.CAPTURE_CHECKPOINT_FINGERPRINT] = ""
+            }
             it[Keys.VRCL_TOKEN] = token
             it[Keys.VRCL_NAME] = displayName
         }
@@ -201,6 +291,9 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit {
             it.remove(Keys.VRCL_TOKEN)
             it.remove(Keys.VRCL_NAME)
+            it[Keys.CAPTURE_AUTO_SEND] = false
+            it[Keys.CAPTURE_CHECKPOINT_MS] = 0L
+            it[Keys.CAPTURE_CHECKPOINT_FINGERPRINT] = ""
         }
     }
 

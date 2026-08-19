@@ -1,6 +1,5 @@
 package com.vrchatlegends.osccompanion.ui
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.tween
@@ -54,6 +53,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
@@ -124,19 +124,13 @@ enum class Destination(
 fun AppRoot(viewModel: AppViewModel) {
     val onboardingCompleted by viewModel.onboardingCompleted.collectAsStateWithLifecycle()
 
-    Crossfade(
-        targetState = onboardingCompleted,
-        animationSpec = tween(320),
-        label = "app start",
-    ) { completed ->
-        when (completed) {
-            null -> StartupScreen()
-            false -> OnboardingScreen(
-                viewModel = viewModel,
-                onFinished = { viewModel.setOnboardingCompleted(true) },
-            )
-            true -> CompanionWorkspace(viewModel)
-        }
+    when (onboardingCompleted) {
+        null -> StartupScreen()
+        false -> OnboardingScreen(
+            viewModel = viewModel,
+            onFinished = { viewModel.setOnboardingCompleted(true) },
+        )
+        true -> CompanionWorkspace(viewModel)
     }
 }
 
@@ -169,64 +163,98 @@ private fun CompanionWorkspace(viewModel: AppViewModel) {
         navController.navigate(destination.route) {
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true
-            restoreState = true
+            // Restoring saved state on the Home tab replays the last screen you
+            // were on, so Home must always land on Home.
+            restoreState = destination != Destination.HOME
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        if (maxWidth >= 760.dp) {
-            Row(Modifier.fillMaxSize()) {
-                WorkspaceSidebar(
-                    currentRoute = currentRoute,
-                    running = connection.running,
-                    vrchatSeen = connection.vrchatSeen,
-                    onNavigate = ::navigate,
-                    modifier = Modifier
-                        .width(224.dp)
-                        .fillMaxHeight(),
-                )
-                WorkspaceNavHost(navController, viewModel, Modifier.weight(1f))
-            }
-        } else {
-            ModalNavigationDrawer(
-                drawerState = drawerState,
-                drawerContent = {
-                    ModalDrawerSheet {
-                        WorkspaceSidebar(
-                            currentRoute = currentRoute,
-                            running = connection.running,
-                            vrchatSeen = connection.vrchatSeen,
-                            onNavigate = { destination ->
-                                navigate(destination)
-                                scope.launch { drawerState.close() }
-                            },
-                            modifier = Modifier
-                                .width(286.dp)
-                                .fillMaxHeight(),
-                        )
-                    }
-                },
-            ) {
-                Column(Modifier.fillMaxSize()) {
-                    TopAppBar(
-                        title = {
-                            Text(
-                                Destination.entries.firstOrNull { it.route == currentRoute }?.label
-                                    ?: "VRC OSC Companion",
-                            )
-                        },
-                        navigationIcon = {
-                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                Icon(Icons.Filled.Menu, contentDescription = "Open navigation")
-                            }
-                        },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                        ),
+    Column(Modifier.fillMaxSize()) {
+        AnnouncementBanner(viewModel)
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            if (maxWidth >= 760.dp) {
+                Row(Modifier.fillMaxSize()) {
+                    WorkspaceSidebar(
+                        currentRoute = currentRoute,
+                        running = connection.running,
+                        vrchatSeen = connection.vrchatSeen,
+                        onNavigate = ::navigate,
+                        modifier = Modifier
+                            .width(224.dp)
+                            .fillMaxHeight(),
                     )
                     WorkspaceNavHost(navController, viewModel, Modifier.weight(1f))
                 }
+            } else {
+                ModalNavigationDrawer(
+                    drawerState = drawerState,
+                    drawerContent = {
+                        ModalDrawerSheet {
+                            WorkspaceSidebar(
+                                currentRoute = currentRoute,
+                                running = connection.running,
+                                vrchatSeen = connection.vrchatSeen,
+                                onNavigate = { destination ->
+                                    navigate(destination)
+                                    scope.launch { drawerState.close() }
+                                },
+                                modifier = Modifier
+                                    .width(286.dp)
+                                    .fillMaxHeight(),
+                            )
+                        }
+                    },
+                ) {
+                    Column(Modifier.fillMaxSize()) {
+                        TopAppBar(
+                            title = {
+                                Text(
+                                    Destination.entries.firstOrNull { it.route == currentRoute }?.label
+                                        ?: "VRC OSC Companion",
+                                )
+                            },
+                            navigationIcon = {
+                                IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                    Icon(Icons.Filled.Menu, contentDescription = "Open navigation")
+                                }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+                            ),
+                        )
+                        WorkspaceNavHost(navController, viewModel, Modifier.weight(1f))
+                    }
+                }
             }
+        }
+    }
+}
+
+/**
+ * A staff push from the moderation bot's `/announce` command. It rides in on the heartbeat, so
+ * it can appear on any tab, and it stays until the user dismisses it or it expires.
+ */
+@Composable
+private fun AnnouncementBanner(viewModel: AppViewModel) {
+    val announcement by viewModel.announcement.collectAsStateWithLifecycle()
+    val current = announcement ?: return
+    val urgent = current.isUrgent
+    Surface(
+        color = if (urgent) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer,
+        contentColor = if (urgent) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(current.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(current.body, style = MaterialTheme.typography.bodySmall)
+                Text("from ${current.from}", style = MaterialTheme.typography.labelSmall)
+            }
+            TextButton(onClick = viewModel::dismissAnnouncement) { Text("Dismiss") }
         }
     }
 }
@@ -241,7 +269,7 @@ private fun WorkspaceSidebar(
 ) {
     Surface(
         modifier = modifier,
-        color = MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
     ) {
         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 16.dp)) {
             Row(

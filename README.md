@@ -25,8 +25,21 @@ Native **Kotlin + Jetpack Compose**. No WebView, no game engine.
 | **VRChat logs** | Reads VRChat's own log off the headset: world changes, joins and leaves, errors, raw tail |
 | **Monitor** | Raw bidirectional OSC feed with address filtering, for debugging |
 | **VRChat Tools** | Coming soon. VRChat account sign-in and API features |
-| **Community** | Coming soon. VRChat Legends events, leaderboards and shared presets |
+| **Community** | Social feed, comments, follows, events, leaderboards, and sandboxed shared scripts |
 | **VRChat Legends** | Optional sign-in with the same account as the website. Everything works signed out |
+
+## Community scripts
+
+Community scripts are deliberately not executable code. Installing one copies a strict JSON
+preset into the app-private `files/scripts` folder after showing every effect for review. A
+script can contain only chatbox lines, waits, and writes to parameters that the current avatar
+reports as writable through OSCQuery.
+
+Scripts never auto-run. The user must tap **Run once**, and can stop the active script at any
+time. The runner reloads and revalidates the stored file before every run, permits only one run
+at a time, enforces pacing and a two-minute ceiling, and stops if VRChat disconnects or the
+avatar changes. Scripts cannot run code or shell commands, access files, launch Android intents,
+select raw OSC paths, control movement inputs, schedule themselves, or make network requests.
 
 ## Background running
 
@@ -113,6 +126,7 @@ app/src/main/java/com/vrchatlegends/osccompanion/
   logs/        VRChat log discovery, tailing and parsing
   net/         Quest LAN IP / broadcast detection
   data/        DataStore settings + chatbox presets
+  scripts/     strict policy, private JSON store and one-shot sandboxed runner
   vrcl/        VRChat Legends API client and Custom Tab OAuth
   pulsoid/     Heart rate websocket
   status/      MagicChatbox-style status line composer

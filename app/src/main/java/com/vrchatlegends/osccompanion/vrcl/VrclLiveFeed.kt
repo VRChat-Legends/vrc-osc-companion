@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -29,6 +30,8 @@ class VrclLiveFeed(private val tokenProvider: () -> String?) {
         data class NewPost(val post: VrclPost) : Event
         data class Deleted(val playerId: String, val postId: String) : Event
         data class Like(val playerId: String, val postId: String, val likeCount: Int) : Event
+        data class NewComment(val postId: String) : Event
+        data class CommentDeleted(val postId: String, val commentId: String) : Event
         data class Connected(val connected: Boolean) : Event
     }
 
@@ -115,25 +118,21 @@ class VrclLiveFeed(private val tokenProvider: () -> String?) {
             "post.new" -> {
                 val postObj = payload["post"] as? JsonObject ?: return null
                 val playerId = payload.str("playerId") ?: postObj.str("playerId") ?: return null
-                val id = postObj.str("id") ?: return null
-                Event.NewPost(
-                    VrclPost(
-                        key = "$playerId-$id",
-                        id = id,
-                        playerId = playerId,
-                        authorName = postObj.str("authorName") ?: "Legend",
-                        authorAvatarUrl = postObj.str("authorAvatarUrl"),
-                        authorVerified = postObj.bool("authorVerified"),
-                        body = postObj.str("body").orEmpty(),
-                        createdAt = postObj.str("createdAt"),
-                        likeCount = postObj.int("likeCount") ?: 0,
-                        commentCount = postObj.int("commentCount") ?: 0,
-                        repostCount = postObj.int("repostCount") ?: 0,
-                        viewerLiked = false,
-                        imageUrl = postObj.firstMediaUrl(),
-                        repostedBy = null,
-                    ),
-                )
+                // The summary on the wire can leave playerId at the envelope level, so graft it
+                // on before handing the object to the parser the REST feed also uses.
+                val merged = JsonObject(postObj + ("playerId" to JsonPrimitive(playerId)))
+                Event.NewPost(merged.toPost() ?: return null)
+            }
+
+            "comment.new" -> {
+                val postId = payload.str("postId") ?: return null
+                Event.NewComment(postId)
+            }
+
+            "comment.deleted" -> {
+                val postId = payload.str("postId") ?: return null
+                val commentId = payload.str("commentId") ?: return null
+                Event.CommentDeleted(postId, commentId)
             }
 
             "post.deleted" -> {

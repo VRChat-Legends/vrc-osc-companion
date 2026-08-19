@@ -1,7 +1,12 @@
 package com.vrchatlegends.osccompanion.ui.screens
 
 import android.content.Context
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,10 +21,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -28,10 +35,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -44,6 +55,10 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vrchatlegends.osccompanion.BuildConfig
+import com.vrchatlegends.osccompanion.data.AppSettings
+import com.vrchatlegends.osccompanion.data.AppTheme
+import com.vrchatlegends.osccompanion.data.MAX_BACKGROUND_DIM
+import com.vrchatlegends.osccompanion.data.MIN_BACKGROUND_DIM
 import com.vrchatlegends.osccompanion.diag.CrashReporter
 import com.vrchatlegends.osccompanion.logs.VrcLogReader
 import com.vrchatlegends.osccompanion.net.NetworkUtils
@@ -52,6 +67,8 @@ import com.vrchatlegends.osccompanion.ui.AppViewModel
 import com.vrchatlegends.osccompanion.ui.LabelledValue
 import com.vrchatlegends.osccompanion.ui.ScreenScaffold
 import com.vrchatlegends.osccompanion.ui.SectionCard
+import com.vrchatlegends.osccompanion.ui.ThemeModeSelector
+import com.vrchatlegends.osccompanion.ui.theme.AccentChoices
 import com.vrchatlegends.osccompanion.ui.theme.Bad
 import com.vrchatlegends.osccompanion.ui.theme.Good
 import com.vrchatlegends.osccompanion.ui.theme.SignalCyan
@@ -84,7 +101,31 @@ fun SettingsScreen(viewModel: AppViewModel) {
         title = "Settings",
         subtitle = "VRC OSC Companion ${BuildConfig.VERSION_NAME}",
     ) {
-        SectionCard(
+        var showAdvanced by rememberSaveable { mutableStateOf(false) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = !showAdvanced,
+                onClick = { showAdvanced = false },
+                label = { Text("General") },
+            )
+            FilterChip(
+                selected = showAdvanced,
+                onClick = { showAdvanced = true },
+                label = { Text("Advanced") },
+            )
+        }
+
+        if (!showAdvanced) {
+            AppearanceSection(
+                accentArgb = settings.accentColor,
+                appTheme = settings.appTheme,
+                backgroundUri = settings.backgroundUri,
+                backgroundDim = settings.backgroundDim,
+                viewModel = viewModel,
+            )
+        }
+
+        if (showAdvanced) SectionCard(
             title = "OSC target",
             subtitle = "Where this app sends OSC messages",
         ) {
@@ -208,7 +249,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
             )
         }
 
-        SectionCard(
+        if (showAdvanced) SectionCard(
             title = "Discovery",
             subtitle = if (connection.oscQueryHttpPort > 0) {
                 "Advertising on :${connection.oscQueryHttpPort}"
@@ -230,7 +271,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
             ) { v -> viewModel.updateSettings { setUseBroadcast(v) } }
         }
 
-        SectionCard(title = "Behaviour") {
+        if (!showAdvanced) SectionCard(title = "Behaviour") {
             ToggleSetting(
                 "Connect on launch",
                 "Opens the socket as soon as the panel starts.",
@@ -246,8 +287,10 @@ fun SettingsScreen(viewModel: AppViewModel) {
             )
         }
 
+        if (!showAdvanced) CameraCaptureSection(viewModel, settings)
+
         // Nothing to explain once the user already has Developer Mode on.
-        if (!remember { VrcLogReader.isDeveloperModeOn(context) }) {
+        if (showAdvanced && !remember { VrcLogReader.isDeveloperModeOn(context) }) {
             SectionCard(
                 title = "Meta Developer Mode",
                 subtitle = "Most OSC tools do not need it",
@@ -271,7 +314,7 @@ fun SettingsScreen(viewModel: AppViewModel) {
             }
         }
 
-        SectionCard(title = "About") {
+        if (!showAdvanced) SectionCard(title = "About") {
             LabelledValue("Version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
             LabelledValue("Package", BuildConfig.APPLICATION_ID)
             Text(
@@ -286,8 +329,9 @@ fun SettingsScreen(viewModel: AppViewModel) {
             }
         }
 
-        var lastCrash by remember { mutableStateOf(CrashReporter.lastCrash(context)) }
-        lastCrash?.let { trace ->
+        if (showAdvanced) {
+            var lastCrash by remember { mutableStateOf(CrashReporter.lastCrash(context)) }
+            lastCrash?.let { trace ->
             SectionCard(
                 title = "Last crash",
                 subtitle = "Captured on this headset, send this to support",
@@ -316,6 +360,115 @@ fun SettingsScreen(viewModel: AppViewModel) {
                 }
             }
         }
+        }
+    }
+}
+
+/**
+ * Accent colour and a custom wallpaper.
+ *
+ * The picker is [ActivityResultContracts.OpenDocument] rather than the photo picker: Horizon OS
+ * ships the storage access framework but not Google's media picker.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppearanceSection(
+    accentArgb: Long,
+    appTheme: AppTheme,
+    backgroundUri: String,
+    backgroundDim: Float,
+    viewModel: AppViewModel,
+) {
+    val pickBackground = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(viewModel::setBackgroundUri) }
+
+    var dimDraft by remember(backgroundDim) {
+        mutableStateOf(backgroundDim.coerceIn(MIN_BACKGROUND_DIM, MAX_BACKGROUND_DIM))
+    }
+
+    SectionCard(
+        title = "Appearance",
+        subtitle = "Theme, colour, and your own background",
+    ) {
+        Text("Theme", style = MaterialTheme.typography.titleMedium)
+        ThemeModeSelector(
+            selected = appTheme,
+            onSelect = viewModel::setAppTheme,
+        )
+
+        Text("Accent", style = MaterialTheme.typography.titleMedium)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            AccentChoices.forEachIndexed { index, (name, color) ->
+                // Index 0 is the built in look, which is stored as 0 rather than its argb so a
+                // future palette change still lands for anyone who never picked a colour.
+                val stored = if (index == 0) 0L else color.toArgb().toLong()
+                AccentSwatch(
+                    name = name,
+                    color = color,
+                    selected = accentArgb == stored,
+                    onClick = { viewModel.setAccentColor(stored) },
+                )
+            }
+        }
+
+        Text("Background", style = MaterialTheme.typography.titleMedium)
+        Text(
+            if (backgroundUri.isBlank()) "Pick an image or a video and it loops behind the app."
+            else "Custom background active. Videos loop muted.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { pickBackground.launch(arrayOf("image/*", "video/*")) }) {
+                Text(if (backgroundUri.isBlank()) "Choose background" else "Replace")
+            }
+            if (backgroundUri.isNotBlank()) {
+                OutlinedButton(onClick = viewModel::clearBackground) { Text("Remove") }
+            }
+        }
+
+        if (backgroundUri.isNotBlank()) {
+            Text(
+                "Dim ${(dimDraft * 100).toInt()}%",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Slider(
+                value = dimDraft,
+                onValueChange = { dimDraft = it },
+                onValueChangeFinished = { viewModel.setBackgroundDim(dimDraft) },
+                valueRange = MIN_BACKGROUND_DIM..MAX_BACKGROUND_DIM,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccentSwatch(name: String, color: Color, selected: Boolean, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(color, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = "Selected",
+                    tint = Color.Black.copy(alpha = 0.75f),
+                )
+            }
+        }
+        Text(name, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -362,3 +515,76 @@ private fun DeveloperModeRequirement(required: Boolean, title: String, detail: S
         }
     }
 }
+
+@Composable
+private fun CameraCaptureSection(viewModel: AppViewModel, settings: AppSettings) {
+    val setup by viewModel.captureSetup.collectAsStateWithLifecycle()
+    val watcher by viewModel.cameraCapture.collectAsStateWithLifecycle()
+    val uriHandler = LocalUriHandler.current
+    val pickFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> uri?.let(viewModel::setCaptureFolder) }
+
+    SectionCard(
+        title = "Camera to Discord",
+        subtitle = "Off until you opt in, and never sends old photos",
+    ) {
+        Text(
+            "Sends each new VRChat camera picture to the Discord webhook saved in your " +
+                "VRChat Legends account settings. Uploads go through your signed-in account; " +
+                "the webhook URL itself never reaches this headset.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { pickFolder.launch(vrchatPhotosInitialUri()) }) {
+                Text(if (settings.captureFolderUri.isBlank()) "Choose VRChat photos folder" else "Change folder")
+            }
+            OutlinedButton(
+                onClick = { uriHandler.openUri("${BuildConfig.VRCL_BASE_URL}/account/settings?tab=notifications") },
+            ) {
+                Text("Webhook settings")
+            }
+        }
+
+        if (settings.captureFolderUri.isNotBlank()) {
+            LabelledValue("Watched folder", captureFolderLabel(settings.captureFolderUri))
+        }
+
+        ToggleSetting(
+            "Auto-send newest capture",
+            "JPEG, PNG, or WebP up to 8 MB. Pictures taken before enabling are never sent.",
+            settings.captureAutoSend,
+        ) { viewModel.setCaptureAutoSend(it) }
+
+        if (setup.busy) {
+            Text(
+                "Checking...",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        setup.error?.let {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = Bad)
+        }
+        setup.notice?.let {
+            Text(it, style = MaterialTheme.typography.labelSmall, color = Good)
+        }
+        if (settings.captureAutoSend) {
+            watcher.message?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/** Drops the system picker straight onto the VRChat photo folder. */
+private fun vrchatPhotosInitialUri() = DocumentsContract.buildDocumentUri(
+    "com.android.externalstorage.documents",
+    "primary:Pictures/VRChat",
+)
+
+private fun captureFolderLabel(uri: String): String = runCatching {
+    java.net.URLDecoder.decode(uri.substringAfterLast('/'), "UTF-8").substringAfterLast(':')
+}.getOrDefault("Selected folder")

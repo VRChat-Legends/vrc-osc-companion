@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,35 @@ data class ConnectionState(
     /** VRChat only sends when OSC is enabled in its Action Menu, so inbound traffic is the real handshake. */
     val vrchatSeen: Boolean
         get() = lastInboundMs > 0 && System.currentTimeMillis() - lastInboundMs < 30_000
+}
+
+internal class AvatarSchemaEpoch {
+    var current: Long = 0L
+        private set
+
+    private var loaded: Long = -1L
+
+    fun invalidate(): Long {
+        current += 1L
+        loaded = -1L
+        return current
+    }
+
+    fun canLoad(epoch: Long): Boolean = epoch == current
+
+    fun markLoaded(epoch: Long): Boolean {
+        if (!canLoad(epoch)) return false
+        loaded = epoch
+        return true
+    }
+
+    fun isLoaded(): Boolean = loaded == current
+}
+
+internal fun revokeScriptOscQueryProvenance(
+    parameters: Map<String, ParameterState>,
+): Map<String, ParameterState> = parameters.mapValues { (_, parameter) ->
+    parameter.copy(value = null, fromOscQuery = false)
 }
 
 /**
@@ -108,13 +138,19 @@ class OscRepository private constructor(private val appContext: Context) {
 
     private var queryServer: OscQueryServer? = null
     private var discovery: OscQueryDiscovery? = null
+    private var discoveryWatchdog: Job? = null
     private var chatboxJob: Job? = null
 
+    private val lifecycleMutex = Mutex()
     private val chatboxMutex = Mutex()
+    private val chatboxSendMutex = Mutex()
+    private val scriptDispatchLock = Any()
+    private val avatarSchemaEpoch = AvatarSchemaEpoch()
     private var pendingChatbox: String? = null
     private var lastChatboxSendMs = 0L
 
     @Volatile private var settings: AppSettings = AppSettings()
+    @Volatile private var runningRequested = false
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
 
@@ -137,15 +173,26 @@ class OscRepository private constructor(private val appContext: Context) {
     }
 
     fun start() {
-        scope.launch { restart() }
+        runningRequested = true
+        scope.launch {
+            lifecycleMutex.withLock {
+                if (runningRequested && !_connection.value.running) restartLocked()
+            }
+        }
     }
 
     private suspend fun restart() {
+        lifecycleMutex.withLock {
+            if (runningRequested) restartLocked()
+        }
+    }
+
+    private suspend fun restartLocked() {
         // The bridge is deliberately left alone here: it owns its own socket and has no
         // reason to drop the PC link just because the VRChat side re-bound.
-        stopInternal(stopBridge = false)
+        stopInternalLocked(stopBridge = false)
         transport.start(settings.oscReceivePort)
-        retarget()
+        retargetLocked()
 
         _connection.update {
             it.copy(
@@ -161,6 +208,12 @@ class OscRepository private constructor(private val appContext: Context) {
     }
 
     private suspend fun retarget() {
+        lifecycleMutex.withLock {
+            if (runningRequested && _connection.value.running) retargetLocked()
+        }
+    }
+
+    private suspend fun retargetLocked() {
         val host = settings.resolvedHost(appContext)
         transport.setTarget(host, settings.oscSendPort, settings.useBroadcast)
         _connection.update {
@@ -173,19 +226,39 @@ class OscRepository private constructor(private val appContext: Context) {
     }
 
     fun stop() {
-        scope.launch { stopInternal(stopBridge = true) }
+        runningRequested = false
+        scope.launch {
+            lifecycleMutex.withLock {
+                if (!runningRequested) stopInternalLocked(stopBridge = true)
+            }
+        }
     }
 
-    private suspend fun stopInternal(stopBridge: Boolean) {
+    private suspend fun stopInternalLocked(stopBridge: Boolean) {
         chatboxJob?.cancel()
         chatboxJob = null
         discovery?.stop()
         discovery = null
+        discoveryWatchdog?.cancel()
+        discoveryWatchdog = null
         queryServer?.stop()
         queryServer = null
         if (stopBridge) bridge.stop()
         transport.stop()
-        _connection.update { it.copy(running = false, listenPort = 0, oscQueryHttpPort = 0) }
+        synchronized(scriptDispatchLock) {
+            _avatarId.value = null
+            avatarSchemaEpoch.invalidate()
+            _parameters.update(::revokeScriptOscQueryProvenance)
+        }
+        _connection.update {
+            it.copy(
+                running = false,
+                listenPort = 0,
+                oscQueryHttpPort = 0,
+                vrchatPeer = null,
+                lastInboundMs = 0L,
+            )
+        }
     }
 
     // ── OSCQuery ────────────────────────────────────────────────────────────────
@@ -210,6 +283,18 @@ class OscRepository private constructor(private val appContext: Context) {
         )
         disc.start()
         discovery = disc
+        discoveryWatchdog?.cancel()
+        discoveryWatchdog = scope.launch {
+            while (isActive) {
+                delay(DISCOVERY_RETRY_MS)
+                val state = _connection.value
+                if (!state.running || !settings.useOscQuery) break
+                if (!state.vrchatSeen) {
+                    pushEvent("Refreshing OSCQuery discovery")
+                    disc.start()
+                }
+            }
+        }
     }
 
     private fun subscribedPaths(): List<String> =
@@ -217,7 +302,7 @@ class OscRepository private constructor(private val appContext: Context) {
             _parameters.value.values.map { it.address }
 
     private fun onPeerFound(peer: OscQueryPeer) {
-        if (!peer.isVrChat) return
+        if (!peer.isVrChat || !runningRequested || !_connection.value.running || !settings.useOscQuery) return
         _connection.update { it.copy(vrchatPeer = peer) }
         pushEvent("Found ${peer.name} at ${peer.host}:${peer.httpPort}")
 
@@ -232,13 +317,30 @@ class OscRepository private constructor(private val appContext: Context) {
             }
         }
 
-        scope.launch {
-            val nodes = discovery?.fetchTree(peer).orEmpty()
-            if (nodes.isEmpty()) return@launch
+        val expectedEpoch = synchronized(scriptDispatchLock) { avatarSchemaEpoch.current }
+        scope.launch { loadAvatarSchema(peer, expectedEpoch) }
+    }
+
+    private suspend fun loadAvatarSchema(peer: OscQueryPeer, expectedEpoch: Long) {
+        val nodes = discovery?.fetchTree(peer).orEmpty()
+        val avatarNodes = nodes.filter { it.isAvatarParameter }
+        if (avatarNodes.isEmpty()) return
+
+        var applied = false
+        synchronized(scriptDispatchLock) {
+            if (!avatarSchemaEpoch.canLoad(expectedEpoch) ||
+                _connection.value.vrchatPeer != peer ||
+                !_connection.value.running ||
+                !settings.useOscQuery
+            ) {
+                return@synchronized
+            }
             val now = System.currentTimeMillis()
             _parameters.update { current ->
-                val merged = current.toMutableMap()
-                for (node in nodes.filter { it.isAvatarParameter }) {
+                val merged = current.mapValues { (_, parameter) ->
+                    parameter.copy(fromOscQuery = false)
+                }.toMutableMap()
+                for (node in avatarNodes) {
                     val existing = merged[node.name]
                     merged[node.name] = ParameterState(
                         name = node.name,
@@ -252,9 +354,11 @@ class OscRepository private constructor(private val appContext: Context) {
                 }
                 merged
             }
-            queryServer?.updatePaths(subscribedPaths())
-            pushEvent("Loaded ${nodes.count { it.isAvatarParameter }} parameters from OSCQuery")
+            applied = avatarSchemaEpoch.markLoaded(expectedEpoch)
         }
+        if (!applied) return
+        queryServer?.updatePaths(subscribedPaths())
+        pushEvent("Loaded ${avatarNodes.size} parameters from OSCQuery")
     }
 
     // ── Inbound ─────────────────────────────────────────────────────────────────
@@ -274,11 +378,13 @@ class OscRepository private constructor(private val appContext: Context) {
         when {
             message.address == VrcOsc.AVATAR_CHANGE -> {
                 val id = (message.args.firstOrNull() as? OscArg.OscString)?.value
-                _avatarId.value = id
-                // Parameter values are per-avatar; drop stale ones but keep the schema.
-                _parameters.update { current ->
-                    current.mapValues { (_, p) -> p.copy(value = null) }
+                val reload = synchronized(scriptDispatchLock) {
+                    _avatarId.value = id
+                    val epoch = avatarSchemaEpoch.invalidate()
+                    _parameters.update(::revokeScriptOscQueryProvenance)
+                    _connection.value.vrchatPeer?.let { it to epoch }
                 }
+                reload?.let { (peer, epoch) -> scope.launch { loadAvatarSchema(peer, epoch) } }
                 pushEvent("Avatar changed${id?.let { " -> $it" } ?: ""}")
             }
 
@@ -347,6 +453,39 @@ class OscRepository private constructor(private val appContext: Context) {
         }
     }
 
+    suspend fun sendScriptChatbox(text: String): Boolean =
+        sendChatboxNow(
+            text = clipChatbox(text),
+            immediate = true,
+            silent = true,
+            requireVrchatSeen = true,
+        )
+
+    fun setScriptParameter(expectedAvatarId: String, name: String, value: OscArg): Boolean =
+        synchronized(scriptDispatchLock) {
+            val current = _connection.value
+            if (!current.running || !current.vrchatSeen || _avatarId.value != expectedAvatarId) {
+                return@synchronized false
+            }
+            if (!avatarSchemaEpoch.isLoaded()) return@synchronized false
+            val parameter = _parameters.value[name] ?: return@synchronized false
+            if (parameter.address != VrcOsc.parameter(name) ||
+                !parameter.fromOscQuery ||
+                !parameter.writable
+            ) {
+                return@synchronized false
+            }
+            val compatible = when (value) {
+                is OscArg.OscBool -> parameter.isBool
+                is OscArg.OscInt -> parameter.isInt
+                is OscArg.OscFloat -> parameter.isFloat
+                else -> false
+            }
+            if (!compatible) return@synchronized false
+            setParameter(name, value)
+            true
+        }
+
     fun setEyeHeight(metres: Float) {
         val clamped = metres.coerceIn(0.01f, 10_000f)
         send(OscMessage.of(VrcOsc.AVATAR_EYE_HEIGHT, clamped))
@@ -374,22 +513,41 @@ class OscRepository private constructor(private val appContext: Context) {
                         pendingChatbox = null
                         value
                     } ?: break
-                    val wait = CHATBOX_MIN_INTERVAL_MS - (System.currentTimeMillis() - lastChatboxSendMs)
-                    if (wait > 0) delay(wait)
-                    lastChatboxSendMs = System.currentTimeMillis()
-                    send(
-                        OscMessage(
-                            VrcOsc.CHATBOX_INPUT,
-                            listOf(
-                                OscArg.OscString(next),
-                                OscArg.OscBool(immediate),
-                                OscArg.OscBool(!silent),
-                            ),
-                        )
-                    )
+                    sendChatboxNow(next, immediate, silent, requireVrchatSeen = false)
                 }
             }
         }
+    }
+
+    private suspend fun sendChatboxNow(
+        text: String,
+        immediate: Boolean,
+        silent: Boolean,
+        requireVrchatSeen: Boolean,
+    ): Boolean = chatboxSendMutex.withLock {
+        if (requireVrchatSeen) {
+            val beforeWait = _connection.value
+            if (!beforeWait.running || !beforeWait.vrchatSeen) return@withLock false
+        }
+        val remaining = CHATBOX_MIN_INTERVAL_MS -
+            (System.currentTimeMillis() - lastChatboxSendMs)
+        if (remaining > 0) delay(remaining)
+        if (requireVrchatSeen) {
+            val beforeSend = _connection.value
+            if (!beforeSend.running || !beforeSend.vrchatSeen) return@withLock false
+        }
+        lastChatboxSendMs = System.currentTimeMillis()
+        send(
+            OscMessage(
+                VrcOsc.CHATBOX_INPUT,
+                listOf(
+                    OscArg.OscString(text),
+                    OscArg.OscBool(immediate),
+                    OscArg.OscBool(!silent),
+                ),
+            ),
+        )
+        true
     }
 
     fun clearChatbox() = sendChatbox("", immediate = true, silent = true)
@@ -447,6 +605,7 @@ class OscRepository private constructor(private val appContext: Context) {
 
         /** VRChat throttles the chatbox; anything faster than this gets dropped. */
         const val CHATBOX_MIN_INTERVAL_MS = 1_500L
+        const val DISCOVERY_RETRY_MS = 20_000L
 
         @Volatile private var instance: OscRepository? = null
 

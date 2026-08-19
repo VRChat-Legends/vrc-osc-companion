@@ -76,6 +76,14 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // Compose ships pagers, flow layouts and several material3 scaffolds behind opt-in
+        // markers. They are stable in practice on the versions pinned above, and opting in
+        // once here beats sprinkling @OptIn on every composable that touches them.
+        freeCompilerArgs = freeCompilerArgs + listOf(
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+        )
     }
 
     buildFeatures {
@@ -95,12 +103,14 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("org.luaj:luaj-jse:3.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.4")
     implementation("androidx.lifecycle:lifecycle-service:2.8.4")
     implementation("androidx.activity:activity-compose:1.9.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.browser:browser:1.8.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
@@ -117,6 +127,13 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-gif:2.6.0")
+    implementation("io.coil-kt:coil-video:2.6.0")
+
+    // Feed videos and looping custom backgrounds. 1.3.x is the last line that builds
+    // against compileSdk 34; 1.4+ requires 35.
+    implementation("androidx.media3:media3-exoplayer:1.3.1")
+    implementation("androidx.media3:media3-ui:1.3.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 
