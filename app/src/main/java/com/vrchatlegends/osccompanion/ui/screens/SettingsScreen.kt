@@ -1,6 +1,7 @@
 package com.vrchatlegends.osccompanion.ui.screens
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.vrchatlegends.osccompanion.BuildConfig
+import com.vrchatlegends.osccompanion.capture.CameraCaptureFolder
 import com.vrchatlegends.osccompanion.data.AppSettings
 import com.vrchatlegends.osccompanion.data.AppTheme
 import com.vrchatlegends.osccompanion.data.MAX_BACKGROUND_DIM
@@ -521,9 +523,15 @@ private fun CameraCaptureSection(viewModel: AppViewModel, settings: AppSettings)
     val setup by viewModel.captureSetup.collectAsStateWithLifecycle()
     val watcher by viewModel.cameraCapture.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
     val pickFolder = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri -> uri?.let(viewModel::setCaptureFolder) }
+    val requestStorage = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) viewModel.setCaptureFolderAuto() else viewModel.reportCapturePermissionDenied()
+    }
 
     SectionCard(
         title = "Camera to Discord",
@@ -538,8 +546,18 @@ private fun CameraCaptureSection(viewModel: AppViewModel, settings: AppSettings)
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { pickFolder.launch(vrchatPhotosInitialUri()) }) {
-                Text(if (settings.captureFolderUri.isBlank()) "Choose VRChat photos folder" else "Change folder")
+            Button(onClick = {
+                val permission = CameraCaptureFolder.readPermission()
+                if (context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
+                    viewModel.setCaptureFolderAuto()
+                } else {
+                    requestStorage.launch(permission)
+                }
+            }) {
+                Text("Find automatically")
+            }
+            OutlinedButton(onClick = { pickFolder.launch(vrchatPhotosInitialUri()) }) {
+                Text(if (settings.captureFolderUri.isBlank()) "Pick folder" else "Change folder")
             }
             OutlinedButton(
                 onClick = { uriHandler.openUri("${BuildConfig.VRCL_BASE_URL}/account/settings?tab=notifications") },
@@ -585,6 +603,9 @@ private fun vrchatPhotosInitialUri() = DocumentsContract.buildDocumentUri(
     "primary:Pictures/VRChat",
 )
 
-private fun captureFolderLabel(uri: String): String = runCatching {
-    java.net.URLDecoder.decode(uri.substringAfterLast('/'), "UTF-8").substringAfterLast(':')
-}.getOrDefault("Selected folder")
+private fun captureFolderLabel(uri: String): String {
+    if (uri == CameraCaptureFolder.AUTO_SOURCE) return "Pictures/VRChat (found automatically)"
+    return runCatching {
+        java.net.URLDecoder.decode(uri.substringAfterLast('/'), "UTF-8").substringAfterLast(':')
+    }.getOrDefault("Selected folder")
+}

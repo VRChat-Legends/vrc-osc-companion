@@ -339,13 +339,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
         }
+        adoptCaptureSource(uri.toString())
+    }
+
+    /** Finds Pictures/VRChat on shared storage without the folder picker. */
+    fun setCaptureFolderAuto() {
+        val folder = CameraCaptureFolder.autoFolder()
+        if (folder == null) {
+            _captureSetup.value = CaptureSetupState(
+                error = "No Pictures/VRChat folder was found yet. Take one photo with the " +
+                    "VRChat camera, or pick the folder by hand.",
+            )
+            return
+        }
+        adoptCaptureSource(CameraCaptureFolder.AUTO_SOURCE)
+    }
+
+    fun reportCapturePermissionDenied() {
+        _captureSetup.value = CaptureSetupState(
+            error = "Storage permission was denied, so the folder cannot be found automatically. " +
+                "Pick it by hand instead.",
+        )
+    }
+
+    private fun adoptCaptureSource(source: String) {
         viewModelScope.launch {
             _captureSetup.value = CaptureSetupState(busy = true)
             // Baseline before saving, so nothing already in the folder can ever be sent.
-            val scan = captureFolder.scan(uri.toString())
+            val scan = captureFolder.scan(source)
             val existing = scan.getOrElse { emptyList() }
             val baseline = CameraCapturePolicy.baselineModifiedAt(existing, System.currentTimeMillis())
-            settingsStore.setCaptureFolder(uri.toString(), baseline)
+            settingsStore.setCaptureFolder(source, baseline)
             _captureSetup.value = when {
                 scan.isFailure -> CaptureSetupState(
                     error = scan.exceptionOrNull()?.message ?: "Could not read that folder.",

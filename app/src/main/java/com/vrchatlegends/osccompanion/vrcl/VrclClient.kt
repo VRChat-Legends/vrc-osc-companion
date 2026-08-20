@@ -173,6 +173,12 @@ data class VrclScript(
     val likeCount: Int,
     val viewerLiked: Boolean,
     val canEdit: Boolean,
+    val locked: Boolean = false,
+    val requiredTiers: List<String> = emptyList(),
+    val iconUrl: String? = null,
+    val bannerUrl: String? = null,
+    val bio: String? = null,
+    val disclaimers: List<String> = emptyList(),
 ) {
     val isLua: Boolean get() = kind == "lua"
 }
@@ -494,6 +500,14 @@ class VrclClient(private val tokenProvider: () -> String?) {
                     likeCount = obj.int("likeCount") ?: 0,
                     viewerLiked = obj.bool("viewerLiked"),
                     canEdit = obj.bool("canEdit"),
+                    locked = obj.bool("locked"),
+                    requiredTiers = (obj["requiredTiers"] as? JsonArray).orEmpty()
+                        .mapNotNull { it.jsonPrimitive.contentOrNull },
+                    iconUrl = obj.str("iconUrl"),
+                    bannerUrl = obj.str("bannerUrl"),
+                    bio = obj.str("bio"),
+                    disclaimers = (obj["disclaimers"] as? JsonArray).orEmpty()
+                        .mapNotNull { (it as? JsonObject)?.str("text") },
                 )
             }
         }

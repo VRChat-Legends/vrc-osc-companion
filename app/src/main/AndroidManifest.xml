@@ -17,6 +17,9 @@
          with the storage access framework, so both routes are declared. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- API 33+ replacement for READ_EXTERNAL_STORAGE, used by the automatic
+         VRChat photos folder discovery for camera captures. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
     <!-- VRChat on Quest writes no log file, its Unity output goes to logcat. Reading another

@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PersonRemove
@@ -61,6 +62,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -85,12 +87,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -628,6 +633,10 @@ private fun ScriptToolbar(
     }
 }
 
+/** Amber used for patron-locked script markers. */
+private val PatronAmber = Color(0xFFFFB74D)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ScriptRow(
     script: VrclScript,
@@ -640,82 +649,201 @@ private fun ScriptRow(
     var confirmingInstall by remember(script.id) { mutableStateOf(false) }
 
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Avatar(script.authorAvatarUrl, script.authorName, 36)
-                Column(Modifier.weight(1f)) {
-                    Text(script.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "by ${script.authorName}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                TextButton(onClick = onLike) {
-                    Icon(
-                        if (script.viewerLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        contentDescription = "Like",
-                        tint = if (script.viewerLiked) SignalCoral else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(" ${script.likeCount}")
-                }
-            }
-
-            script.summary?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    if (script.isLua) {
-                        "Lua script | ${script.installs} installs"
-                    } else {
-                        "${script.steps.size} step${if (script.steps.size == 1) "" else "s"} | ${script.installs} installs"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Column {
+            script.bannerUrl?.let { banner ->
+                AsyncImage(
+                    model = banner,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(84.dp),
                 )
-                TextButton(onClick = { expanded = !expanded }) {
-                    Text(
-                        when {
-                            expanded && script.isLua -> "Hide code"
-                            script.isLua -> "Show code"
-                            expanded -> "Hide steps"
-                            else -> "Show steps"
-                        },
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                Button(
-                    onClick = { confirmingInstall = true },
-                    enabled = !installed && !busy,
-                ) {
-                    if (busy) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(17.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary,
-                        )
-                    } else {
-                        Icon(Icons.Filled.Download, contentDescription = null)
-                    }
-                    Text(if (installed) "Installed" else "Install")
-                }
             }
 
-            AnimatedVisibility(visible = expanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    script.steps.forEachIndexed { index, step ->
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ScriptIcon(script, 56.dp)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            "${index + 1}. ${step.describe}",
-                            style = MaterialTheme.typography.bodySmall,
+                            script.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "by ${script.authorName}",
+                            style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        script.summary?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        ScriptStat(Icons.Filled.Download, "${script.installs}")
+                        ScriptStat(
+                            if (script.viewerLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            "${script.likeCount}",
+                            tint = if (script.viewerLiked) MaterialTheme.colorScheme.primary else null,
+                        )
+                    }
+                }
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    ScriptChip(
+                        if (script.isLua) "Lua" else "${script.steps.size} step${if (script.steps.size == 1) "" else "s"}",
+                        MaterialTheme.colorScheme.primary,
+                        if (script.isLua) Icons.Filled.Code else Icons.Filled.PlayArrow,
+                    )
+                    if (script.locked) ScriptChip("Patron", PatronAmber, Icons.Filled.Lock)
+                    script.tags.take(6).forEach { tag ->
+                        ScriptChip(tag, MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                script.disclaimers.forEach { warning ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Icon(
+                            Icons.Filled.WarningAmber,
+                            contentDescription = null,
+                            tint = PatronAmber,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            warning,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = PatronAmber,
+                        )
+                    }
+                }
+
+                if (script.locked) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Top) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = null,
+                            tint = PatronAmber,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            if (script.requiredTiers.isEmpty()) {
+                                "Locked to patrons. Support VRChat Legends to unlock this script."
+                            } else {
+                                "Locked to ${script.requiredTiers.joinToString(", ")} and above."
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = PatronAmber,
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Button(
+                        onClick = { confirmingInstall = true },
+                        enabled = !script.locked && !installed && !busy,
+                    ) {
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(17.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        } else {
+                            Icon(
+                                if (script.locked) Icons.Filled.Lock else Icons.Filled.Download,
+                                contentDescription = null,
+                            )
+                        }
+                        Text(
+                            when {
+                                script.locked -> "Patron only"
+                                installed -> "Installed"
+                                else -> "Install"
+                            },
+                        )
+                    }
+                    TextButton(onClick = onLike) {
+                        Icon(
+                            if (script.viewerLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = "Like",
+                            tint = if (script.viewerLiked) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp),
+                        )
+                        Text(" Like")
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (!script.locked) {
+                        TextButton(onClick = { expanded = !expanded }) {
+                            Text(
+                                when {
+                                    expanded -> "Hide"
+                                    script.isLua -> "View code"
+                                    else -> "View steps"
+                                },
+                            )
+                        }
+                    }
+                }
+
+                AnimatedVisibility(visible = expanded && !script.locked) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        script.bio?.let { bio ->
+                            Text(
+                                bio,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        ) {
+                            if (script.isLua) {
+                                Text(
+                                    script.luaSource.orEmpty(),
+                                    modifier = Modifier.padding(12.dp),
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            } else {
+                                Column(
+                                    Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    script.steps.forEachIndexed { index, step ->
+                                        Text(
+                                            "${index + 1}. ${step.describe}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -731,6 +859,75 @@ private fun ScriptRow(
                 onInstall()
             },
         )
+    }
+}
+
+@Composable
+private fun ScriptIcon(script: VrclScript, size: Dp) {
+    if (script.iconUrl != null) {
+        AsyncImage(
+            model = script.iconUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(12.dp)),
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(RoundedCornerShape(12.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                        ),
+                    ),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (script.isLua) Icons.Filled.Code else Icons.Filled.PlayArrow,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(size * 0.45f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScriptStat(icon: ImageVector, value: String, tint: Color? = null) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = tint ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(13.dp),
+        )
+        Text(value, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun ScriptChip(label: String, tint: Color, icon: ImageVector? = null) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = tint.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, tint.copy(alpha = 0.35f)),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(11.dp))
+            }
+            Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+        }
     }
 }
 
